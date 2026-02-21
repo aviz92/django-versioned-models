@@ -1,3 +1,2 @@
-include requirements.txt
-include README.md
-include LICENSE
+recursive-include django_versioned_models/migrations *.py
+recursive-include django_versioned_models/management *.py

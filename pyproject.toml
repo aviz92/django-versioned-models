@@ -33,6 +33,7 @@ drf = [
 dev = [
     "pytest",
     "pytest-django",
+    "djangorestframework>=3.14",
 ]
 
 [project.urls]
@@ -42,3 +43,12 @@ Issues = "https://github.com/aviz92/django-versioned-models/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["django_versioned_models"]
+
+[tool.hatch.build.targets.wheel.sources]
+"django_versioned_models" = "django_versioned_models"
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "django_versioned_models/**/*.py",
+    "django_versioned_models/migrations/*.py",
+]
