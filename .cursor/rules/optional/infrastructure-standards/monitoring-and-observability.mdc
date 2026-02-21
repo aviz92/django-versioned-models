@@ -1,0 +1,19 @@
+---
+description: SOLID, KISS, DRY, modular extraction, refactoring safety.
+globs:
+  - "**/*.py"
+alwaysApply: false
+---
+
+## Monitoring & Observability
+
+### Logging
+* **Logging Library**: Use logging libraries as defined in [standard-libraries.mdc](standard-libraries.mdc).
+* **Structured Logging**: Use structured logging formats (JSON) for better parsing and analysis.
+* **Log Levels**: Use appropriate log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+* **Log Aggregation**: Centralize logs for analysis and alerting.
+
+### Metrics & Alerting
+* **Key Metrics**: Monitor key infrastructure metrics (CPU, memory, disk, network).
+* **Application Metrics**: Track application-specific metrics (request rates, error rates, latency).
+* **Alerting**: Set up appropriate alerts for critical issues. Avoid alert fatigue.

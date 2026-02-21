@@ -1,0 +1,26 @@
+---
+description: Python style rules for new and modified code only.
+globs:
+  - "**/*.py"
+alwaysApply: true
+---
+
+# Scope Control (CRITICAL)
+- Apply style rules ONLY to code you add or modify.
+- Do NOT reformat or refactor unrelated parts of the file.
+- Do NOT change existing function signatures unless required for the task.
+- Do NOT add type hints or docstrings to existing code unless explicitly requested.
+
+# Code Style
+- Follow PEP 8.
+- Type hints are required for all new or modified functions.
+- Google-style docstrings are required for complex new or modified functions only.
+- Maximum line length: 120 characters.
+- Use 4 spaces for indentation (never tabs).
+- Prefer keyword arguments: `func(param=value)`.
+
+# Naming Conventions
+- Classes: `PascalCase`
+- Functions/Variables: `snake_case`
+- Constants: `UPPER_SNAKE_CASE`
+- Private: `_leading_underscore`

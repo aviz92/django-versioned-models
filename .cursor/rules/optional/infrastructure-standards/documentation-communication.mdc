@@ -1,0 +1,13 @@
+---
+description: SOLID, KISS, DRY, modular extraction, refactoring safety.
+globs:
+  - "**/*.py"
+alwaysApply: false
+---
+
+## Documentation & Communication
+* **Architecture Diagrams**: Maintain up-to-date architecture diagrams showing system components and interactions.
+* **Runbooks**: Create runbooks for common operational tasks and incident response procedures.
+* **Change Logs**: Document infrastructure changes, including reasons and impact.
+* **Onboarding**: Provide clear documentation for new team members to understand and work with the infrastructure.
+* **Code Review**: Follow code review standards in [python-code-review-command.mdc](../commands/python-code-review-command.md) when reviewing infrastructure code.

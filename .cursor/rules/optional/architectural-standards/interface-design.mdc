@@ -1,0 +1,19 @@
+---
+description: SOLID, KISS, DRY, modular extraction, refactoring safety.
+globs:
+  - "**/*.py"
+alwaysApply: false
+---
+
+## Interface Design
+
+### API Design
+* **Explicit over Implicit**: Make function signatures clear about what they accept and return.
+* **Type Hints**: Follow type hint requirements in [python-style.mdc](code-style.mdc).
+* **Documentation**: Follow docstring standards in [python-style.mdc](code-style.mdc).
+* **Error Handling**: Use appropriate exception types. Document what exceptions functions may raise. See [standard-libraries.mdc](standard-libraries.mdc) for exception handling patterns.
+
+### Abstraction Levels
+* **Appropriate Abstraction**: Create abstractions at the right level—not too high (loses flexibility) or too low (loses clarity).
+* **Interface Segregation**: Keep interfaces focused. Prefer multiple small interfaces over one large interface.
+* **Default Implementations**: Use abstract base classes or protocols to define contracts while allowing default implementations.

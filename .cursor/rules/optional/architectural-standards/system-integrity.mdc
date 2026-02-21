@@ -1,0 +1,27 @@
+---
+description: SOLID, KISS, DRY, modular extraction, refactoring safety.
+globs:
+  - "**/*.py"
+alwaysApply: false
+---
+
+## System Integrity
+* **Idempotency**: Ensure automation and infrastructure operations are idempotent.
+* **Verification**: Ensure architecture supports comprehensive testing and edge-case coverage.
+* **Observability**: Design systems to be observable. Include logging, metrics, and tracing capabilities.
+* **Backward Compatibility**: Consider backward compatibility when making breaking changes. Use versioning for APIs.
+
+### Performance Considerations
+* **Premature Optimization**: Avoid premature optimization. Write clear, correct code first, then optimize if needed.
+* **When to Optimize**:
+  * Performance is a stated requirement
+  * Profiling identifies actual bottlenecks
+  * Code is in a hot path (frequently executed)
+  * Performance issues affect user experience
+* **Optimization Strategies**:
+  * Profile before optimizing to identify real bottlenecks
+  * Optimize algorithms and data structures before micro-optimizations
+  * Use caching for expensive computations
+  * Consider lazy evaluation for large datasets
+  * Use appropriate data structures (sets for membership, dicts for lookups)
+* **Performance vs. Readability**: Favor readability unless performance is critical. Document performance-critical code.

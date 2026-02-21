@@ -1,0 +1,65 @@
+---
+description: Environment, package management, and workflow rules (apply only when relevant).
+globs:
+  - "**/*.py"
+alwaysApply: true
+---
+
+# Scope Control (CRITICAL)
+Apply these rules ONLY when the task involves:
+- Running commands
+- Managing dependencies
+- Modifying pyproject.toml
+- Creating new services or entry points
+- Explaining how to execute or test code
+- Environment configuration
+
+Do NOT:
+- Suggest environment/tooling changes for simple code edits.
+- Modify dependency strategy unless explicitly required.
+- Reorganize project structure without request.
+
+---
+
+# Python & Package Management
+- Target Python >= 3.12.
+- Use `uv` as the exclusive environment and dependency manager.
+- Never suggest raw `pip` or `python` commands.
+- Prefix execution commands with `uv run` when relevant.
+- Manage dependencies exclusively via `pyproject.toml`.
+- Use:
+  - `uv sync` to install dependencies
+  - `uv add <package>` to add new ones
+
+Assume uv manages virtual environments automatically.
+
+---
+
+# Development Workflow
+When giving execution instructions:
+- Testing → `uv run pytest`
+- Running scripts → `uv run python script.py`
+- Running tools → `uv run <tool>`
+
+Do not repeat basic uv instructions unless execution is part of the task.
+
+---
+
+# Configuration & Secrets
+- Never hardcode secrets.
+- Use `.env` at project root.
+- Environment variables must be `UPPER_SNAKE_CASE`.
+- Assume environment loading is handled via `python-dotenv` or equivalent.
+
+Only mention secrets handling if configuration is part of the task.
+
+---
+
+# Dependency Management Discipline
+Apply only when dependencies change:
+
+- Prefer pinned versions for production dependencies.
+- Use compatible ranges for stable libraries.
+- Respect existing index configuration in `pyproject.toml`.
+- Do not change dependency strategy unless requested.
+- Suggest incremental updates only when relevant.

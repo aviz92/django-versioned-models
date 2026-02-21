@@ -1,0 +1,18 @@
+---
+description: SOLID, KISS, DRY, modular extraction, refactoring safety.
+globs:
+  - "**/*.py"
+alwaysApply: false
+---
+
+## Layered Architecture
+
+### Layer Separation
+* **Domain Layer**: Contains business logic and domain models. Should be independent of frameworks and external dependencies.
+* **Application Layer**: Contains use cases and application services. Orchestrates domain objects to fulfill use cases.
+* **Infrastructure Layer**: Contains technical implementations (databases, external APIs, file systems). Should depend on domain abstractions.
+* **Presentation Layer**: Contains user interfaces, APIs, and CLI tools. Should depend on application layer, not domain directly.
+
+### Dependency Direction
+* **Dependency Rule**: Dependencies should point inward toward the domain. Outer layers depend on inner layers, never the reverse.
+* **Abstractions**: Use interfaces and abstract base classes to invert dependencies. Infrastructure should implement domain-defined interfaces.

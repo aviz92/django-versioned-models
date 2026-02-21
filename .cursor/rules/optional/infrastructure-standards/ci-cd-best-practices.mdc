@@ -1,0 +1,26 @@
+---
+description: SOLID, KISS, DRY, modular extraction, refactoring safety.
+globs:
+  - "**/*.py"
+alwaysApply: false
+---
+
+## CI/CD Best Practices
+
+### Pipeline Design
+* **Fast Feedback**: Optimize pipelines for fast feedback. Run quick checks (linting, type checking) before expensive operations (tests, builds).
+* **Parallelization**: Run independent jobs in parallel to reduce total pipeline time.
+* **Caching**: Implement intelligent caching for dependencies, build artifacts, and intermediate results.
+* **Artifact Management**: Store and version build artifacts appropriately. Clean up old artifacts to save storage.
+
+### Pipeline Stages
+* **Validation**: Run validation stages (linting, formatting, type checking) early in the pipeline.
+* **Testing**: Execute tests in appropriate stages. Use test result reporting and artifact collection.
+* **Building**: Build artifacts in a consistent, reproducible manner.
+* **Deployment**: Use separate stages for different deployment targets (staging, production).
+
+### Pipeline Configuration
+* **Version Control**: Store CI/CD configuration in version control alongside application code.
+* **Conditional Execution**: Use appropriate rules for when jobs should run (branches, tags, merge requests, schedules).
+* **Job Dependencies**: Define clear job dependencies using `needs` or `depends_on` to ensure proper execution order.
+* **Failure Handling**: Configure appropriate failure handling (allow_failure, retry logic, notifications).

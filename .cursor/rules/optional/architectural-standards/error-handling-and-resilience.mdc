@@ -1,0 +1,42 @@
+---
+description: SOLID, KISS, DRY, modular extraction, refactoring safety.
+globs:
+  - "**/*.py"
+alwaysApply: false
+---
+
+## Error Handling & Resilience
+
+### Exception Strategy
+* **Fail Fast**: Validate inputs early and fail with clear error messages.
+* **Exception Hierarchy**: Create custom exception hierarchies that reflect domain concepts. Use [standard-libraries.mdc](standard-libraries.mdc) for base exception classes.
+* **Error Context**: Include sufficient context in error messages to aid debugging:
+  * Include relevant variable values and state information
+  * Provide actionable error messages that guide users to solutions
+  * Log errors with appropriate log levels (see [standard-libraries.mdc](standard-libraries.mdc))
+* **Recovery**: Design for graceful degradation when possible. Use circuit breakers for external dependencies.
+* **Exception Types**: Use appropriate exception types:
+  * `ValueError`: Invalid input values or parameters
+  * `TypeError`: Incorrect type passed to function
+  * `KeyError`/`AttributeError`: Missing keys or attributes (prefer explicit checks)
+  * `FileNotFoundError`: Missing files or resources
+  * Custom exceptions: Domain-specific errors that require special handling
+* **Exception Propagation**: Let exceptions propagate to appropriate handlers rather than catching and re-raising unnecessarily.
+* **Error Logging**: Always log exceptions with context before handling or re-raising. Use structured logging for better analysis.
+
+### Validation
+* **Input Validation**: Validate all external inputs at system boundaries (APIs, file inputs, user input).
+* **Type Safety**: Leverage type hints (see [python-style.mdc](code-style.mdc)) and static analysis tools to catch errors early.
+* **Business Rules**: Encode business rules as explicit validation logic, not implicit assumptions.
+* **Validation Patterns**:
+  * Validate early in function execution
+  * Return clear validation error messages
+  * Use validation functions for complex rules
+  * Consider using validation libraries (e.g., Pydantic) for structured data
+
+### Error Recovery Patterns
+* **Retry Logic**: Implement exponential backoff for transient failures (network, external services).
+* **Fallback Mechanisms**: Provide fallback behavior when primary operations fail (e.g., cached data, default values).
+* **Circuit Breakers**: Use circuit breakers to prevent cascading failures in distributed systems.
+* **Timeout Handling**: Always set timeouts for external calls and handle timeout exceptions appropriately.
+* **Partial Success**: Design operations to handle partial success scenarios gracefully.

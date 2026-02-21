@@ -1,0 +1,46 @@
+---
+description: SOLID, KISS, DRY, modular extraction, refactoring safety.
+globs:
+  - "**/*.py"
+alwaysApply: false
+---
+
+## Documentation & Communication
+
+### Documentation Standards
+* **Code as Documentation**: Write self-documenting code through clear naming and structure.
+* **When to Document**:
+  * Public APIs and interfaces (always)
+  * Complex algorithms or business logic
+  * Non-obvious implementation decisions
+  * Workarounds or technical debt
+  * Configuration options and their effects
+* **What to Document**:
+  * **Purpose**: What the code does and why it exists
+  * **Parameters**: Input requirements and constraints
+  * **Returns**: Output format and possible values
+  * **Side Effects**: Any state changes or external interactions
+  * **Exceptions**: What exceptions may be raised and when
+  * **Examples**: Usage examples for complex functions
+* **Documentation Formats**: Follow docstring standards in [python-style.mdc](code-style.mdc) for code documentation.
+
+### Architecture Documentation
+* **Architecture Decision Records (ADRs)**: Document significant architectural decisions and their rationale:
+  * Context and problem statement
+  * Considered alternatives
+  * Decision and rationale
+  * Consequences and trade-offs
+* **API Documentation**: Keep API documentation up-to-date with code changes:
+  * Document all public functions, classes, and modules
+  * Include usage examples
+  * Document breaking changes in changelogs
+* **System Documentation**: Maintain high-level system documentation:
+  * Architecture diagrams
+  * Data flow diagrams
+  * Component interactions
+  * Deployment procedures
+
+### Communication
+* **Onboarding**: Ensure architecture is understandable to new team members through clear structure and documentation.
+* **Change Communication**: Document breaking changes, migrations, and significant updates clearly.
+* **Code Comments**: Use comments to explain "why" not "what". Let code explain itself through clear naming.

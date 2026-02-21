@@ -1,0 +1,16 @@
+---
+description: SOLID, KISS, DRY, modular extraction, refactoring safety.
+globs:
+  - "**/*.py"
+alwaysApply: false
+---
+
+## Pattern Application & Analysis
+* **Tracing**: MANDATORY: Trace every symbol back to its root definition and all usages before refactoring.
+* **Design Patterns**:
+  * **Factory**: Use for object creation when construction logic is complex or needs to be abstracted.
+  * **Singleton**: Use sparingly for shared resources (loggers, configuration). Prefer dependency injection over global singletons.
+  * **Strategy**: Use for algorithms that can be interchanged at runtime.
+  * **Observer**: Use for event-driven architectures and decoupled communication.
+  * **Repository**: Use for abstracting data access and enabling testability.
+* **Trade-offs**: Evaluate performance vs. readability vs. speed before major changes. Document significant trade-off decisions.
