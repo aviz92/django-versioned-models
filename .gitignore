@@ -178,3 +178,4 @@ logs/
 results_output/
 migrations/
 .cursor
+.vscode
