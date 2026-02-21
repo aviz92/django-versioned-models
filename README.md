@@ -197,3 +197,13 @@ from django_versioned_models.services import (
     lock_release,
 )
 ```
+
+---
+
+## 🤝 Contributing
+Contributions are welcome! Please fork the repo, create a branch, and submit a pull request.
+
+---
+
+## 📄 License
+MIT License — see [LICENSE](LICENSE) for details.
