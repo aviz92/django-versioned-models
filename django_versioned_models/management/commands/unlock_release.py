@@ -9,7 +9,7 @@ Usage:
     python manage.py unlock_release --release-version v1.2.0
 """
 
-from apps.core.models import Release
+from django_versioned_models.models import Release
 from django.core.management.base import BaseCommand, CommandError
 
 

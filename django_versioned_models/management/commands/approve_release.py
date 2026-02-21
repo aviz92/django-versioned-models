@@ -8,9 +8,9 @@ Usage:
     python manage.py approve_release --release-version v1.1.0
 """
 
-from apps.core.mixins import DataStatus
-from apps.core.models import Release
-from apps.core.services import get_versioned_models
+from django_versioned_models.mixins import DataStatus
+from django_versioned_models.models import Release
+from django_versioned_models.services import get_versioned_models
 from django.core.management.base import BaseCommand, CommandError
 
 
