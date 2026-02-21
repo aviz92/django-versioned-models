@@ -1,150 +1,190 @@
-![PyPI version](https://img.shields.io/pypi/v/custom-python-logger)
-![Python](https://img.shields.io/badge/python->=3.12-blue)
-![Development Status](https://img.shields.io/badge/status-stable-green)
-![Maintenance](https://img.shields.io/maintenance/yes/2026)
-![PyPI](https://img.shields.io/pypi/dm/custom-python-logger)
-![License](https://img.shields.io/pypi/l/custom-python-logger)
+# django-versioned-models
+
+[![PyPI version](https://img.shields.io/pypi/v/django-versioned-models)](https://pypi.org/project/django-versioned-models/)
+[![Python](https://img.shields.io/badge/python-%3E=3.12-blue)](https://img.shields.io/badge/python-%3E=3.12-blue)
+[![License](https://img.shields.io/pypi/l/django-versioned-models)](https://img.shields.io/pypi/l/django-versioned-models)
+
+Drop-in versioning for Django models. Every model that inherits from `VersionedModel` gets full release management, data status workflow, and CI integration — automatically.
 
 ---
 
-# 🧱 Dev Template Repository
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
-[![Code style: Black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-[![Code style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
-[![Code style: Pylint](https://img.shields.io/badge/code%20style-pylint-000000.svg)](https://github.com/pylint-dev/pylint)
-
-A comprehensive, production-ready template repository for initializing new development projects with consistent tooling, editor settings, GitHub workflows, and best practices. This template serves as a **baseline setup** for modern development workflows, reducing setup overhead and promoting standardization across all your codebases.
-
-## 🎯 Overview
-This template provides a solid foundation for Python projects with:
-- **Pre-configured development environment** with VS Code settings and extensions
-- **Automated CI/CD pipelines** using GitHub Actions
-- **Code quality enforcement** with linting, formatting, and testing
-- **Professional project structure** with proper documentation and metadata
-- **Team collaboration tools** including PR templates and code ownership
-
----
-
-## 📁 What's Included
-
-### 🔧 Development Environment (`.vscode/`)
-- **`settings.json`**: Editor defaults (format on save, lint integration, tab size, Python interpreter)
-- **`extensions.json`**: Recommended extensions for Python development and team consistency
-- **`keybindings.json`**: Custom keyboard shortcuts for improved productivity
-- **`launch.json`**: Debugging configurations for Python applications
-
-### ⚙️ GitHub Configuration (`.github/`)
-- **Workflows**: Automated CI/CD pipelines for testing, linting, and publishing
-  - `publish_to_pypi.yml`: Automated PyPI package publishing
-- **`CODEOWNERS`**: Define default code reviewers per folder/path
-- **Issue templates**: Standardized bug reports and feature requests
-- **Pull request template**: Enforce contribution guidelines and checklists
-
-### 🧹 Code Quality & Style
-- **Python-specific configurations**:
-  - `requirements.txt`: Core dependencies and development tools
-  - `MANIFEST.in`: Package distribution configuration
-  - `env.template`: Environment variables template
-- **`.gitignore`**: Preconfigured for Python, IDEs, and common tools
-- **`.cursor/`**: Cursor IDE specific configurations and instructions
-
-### 📄 Project Metadata
-- **`README.md`**: Comprehensive project documentation
-- **`LICENSE`**: MIT license for open-source projects
-- **`CHANGELOG.md`**: Version tracking and release notes
-
----
-
-## 🚀 Quick Start
-
-### 1. Create New Repository
-Click **"Use this template"** on GitHub to create a new repository based on this template.
-
-### 2. Clone and Setup
-```bash
-# Clone your new repository
-git clone https://github.com/your-username/your-new-repo.git
-cd your-new-repo
-
-# Create virtual environment
-uv venv
-source .venv/bin/activate   # On Windows: .venv\Scripts\activate
-
-# Install dependencies
-uv sync # or uv pip install -r requirements.txt
-
-# Copy environment template
-cp env.template .env
-# Edit .env with your specific configuration
-```
-
-### 3. Customize for Your Project
-1. **Update project metadata**:
-   - Edit `README.md` with your project details
-   - Update `requirements.txt` with your specific dependencies
-   - Modify `MANIFEST.in` for package distribution
-
-2. **Configure environment**:
-   - Edit `.env` file with your environment variables
-   - Update VS Code settings in `.vscode/settings.json` if needed
-
-### 4. Setup Pre-commit Hooks
-```bash
-# Install pre-commit hooks
-pre-commit install
-```
+## Installation
 
 ```bash
-# Run on all files (optional, for existing codebase)
-pre-commit run --all-files
+pip install django-versioned-models
+
+# With DRF support
+pip install django-versioned-models[drf]
 ```
 
+---
+
+## Quick Start
+
+**1. Add to INSTALLED_APPS:**
+```python
+INSTALLED_APPS = [
+    ...
+    'django_versioned_models',
+    'rest_framework',           # optional, for API support
+    'rest_framework.authtoken', # optional, for token auth
+]
+```
+
+**2. Inherit VersionedModel:**
+```python
+from django_versioned_models import VersionedModel
+
+class MyModel(VersionedModel):
+    name = models.CharField(max_length=255)
+
+    class Meta:
+        unique_together = [('release', 'name')]
+```
+
+**3. Add URLs (optional, DRF required):**
+```python
+urlpatterns = [
+    path('api/', include('django_versioned_models.urls')),
+    ...
+]
+```
+
+**4. Run migrations:**
 ```bash
-# Run on all files excluding specific files (example: main.py) (optional, for existing codebase)
-pre-commit run --files $(git ls-files | grep -v "main.py")
+python manage.py migrate
+python manage.py setup_groups
 ```
 
-**Automatic Usage:**
-Once installed, pre-commit will automatically run on every `git commit`. If any hook fails:
-- **Fix the issues** and commit again
-- **Skip hooks** (not recommended): `git commit --no-verify`
+That's it.
 
-### 5. Go-Task
-This template uses **Go-Task** to provide a consistent interface for common development commands.
+---
 
+## How It Works
+Every versioned row has two key fields added automatically:
+
+- `release` — which version this row belongs to
+- `status` — data readiness (`draft` / `future` / `approved`)
+
+### Data Status Workflow
+```
+DRAFT <-> FUTURE -> APPROVED  (one-way, CI only)
+```
+
+| Status | Who | Meaning |
+|--------|-----|---------|
+| `DRAFT` | Architects | Being worked on |
+| `FUTURE` | Architects | Planned for a future release |
+| `APPROVED` | CI only | Stable — what tests run against |
+
+CI always queries `approved` rows. DRAFT and FUTURE are invisible to CI.
+
+```python
+MyModel.objects.approved(release)     # CI — stable only
+MyModel.objects.for_release(release)  # everyone — all statuses
+```
+
+---
+
+## Management Commands
 ```bash
-# List available tasks
-task --list
+# Create a new release branched from an existing locked one
+python manage.py create_release --release-version v1.1.0 --based-on v1.0.0
+
+# Approve all DRAFT rows (CI runs this — FUTURE rows untouched)
+python manage.py approve_release --release-version v1.1.0
+
+# Lock a release (immutable after this)
+python manage.py lock_release --release-version v1.1.0
+
+# Unlock (only before deployment)
+python manage.py unlock_release --release-version v1.1.0
+
+# Soft-delete a release (data preserved, hidden from API)
+python manage.py deprecate_release --release-version v1.0.0
+python manage.py deprecate_release --release-version v1.0.0 --undo
+
+# Create default permission groups (run once, then again when adding new models)
+python manage.py setup_groups
 ```
 
-Use `task <task-name>` to run predefined workflows such as linting, formatting, testing, or other project utilities.
+### Typical CI Flow
+```
+create_release --release-version v1.1.0 --based-on v1.0.0
+      ↓
+architects edit data (status=DRAFT by default)
+      ↓
+approve_release --release-version v1.1.0
+      ↓
+pytest --release-version v1.1.0   (runs against APPROVED only)
+      ↓
+lock_release --release-version v1.1.0
+      ↓
+bug found? → create_release --release-version v1.1.1 --based-on v1.1.0
+```
 
-All tasks are defined in `Taskfile.yml` at the repository root and are intended to standardize local development and CI usage.
+---
+
+## API (DRF)
+```
+GET  /api/releases/                          # active releases
+GET  /api/releases/?include_deprecated=true  # include deprecated
+POST /api/releases/<id>/lock/                # lock (admin only)
+POST /api/auth/token/                        # get auth token
+```
+
+All versioned endpoints accept:
+```
+?version=v1.1.0           # filter by release
+?status=approved          # filter by status
+```
+
+### Permissions
+Four groups are created by `setup_groups`:
+
+| Group | GET | POST | PUT/PATCH | DELETE |
+|-------|-----|------|-----------|--------|
+| `viewers` | ✅ | ❌ | ❌ | ❌ |
+| `editors` | ✅ | ❌ | ✅ | ❌ |
+| `creators` | ✅ | ✅ | ✅ | ❌ |
+| `admins` | ✅ | ✅ | ✅ | ✅ |
+
+Assign users to groups in Django Admin.
+
+### Base ViewSet
+```python
+from django_versioned_models.views import VersionedViewSet
+
+class MyModelViewSet(VersionedViewSet):
+    queryset = MyModel.objects.select_related('release')
+    serializer_class = MyModelSerializer
+```
+
+Permissions and version filtering come for free.
 
 ---
 
-## 🤝 Contributing
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/amazing-feature`
-3. Make your changes and add tests
-4. Ensure all tests pass: `pytest`
-5. Format your code: `black .`
-6. Commit your changes: `git commit -m 'Add amazing feature'`
-7. Push to the branch: `git push origin feature/amazing-feature`
-8. Open a Pull Request
+## Admin
+```python
+from django_versioned_models.admin import VersionedModelAdmin
+
+@admin.register(MyModel)
+class MyModelAdmin(VersionedModelAdmin):
+    list_display = ('name', 'release', 'status')
+```
+
+`release` and `status` fields are injected into the form automatically.
 
 ---
 
-## 📋 Development Checklist
-When using this template for a new project:
+## Adding a New Model
+1. Inherit from `VersionedModel`
+2. Run `makemigrations` and `migrate`
+3. Run `setup_groups` to update permissions
 
-- [ ] Update README.md with project-specific information
-- [ ] Configure environment variables in .env
-- [ ] Update requirements.txt with project dependencies
-- [ ] Set up GitHub repository secrets for CI/CD
-- [ ] Configure package metadata in setup.py or pyproject.toml
-- [ ] Add project-specific tests
+Done. Auto-discovery handles the rest — no manual registration.
 
 ---
+
+## License
+MIT
