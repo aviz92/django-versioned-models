@@ -17,4 +17,4 @@ Quick start:
         name = models.CharField(max_length=255)
 """
 
-default_app_config = 'django_versioned_models.apps.DjangoVersionedModelsConfig'
+default_app_config = "django_versioned_models.apps.DjangoVersionedModelsConfig"
