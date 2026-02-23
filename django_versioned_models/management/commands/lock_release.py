@@ -7,8 +7,9 @@ Usage:
     python manage.py lock_release --version v2.1.0
 """
 
-from django_versioned_models.services import lock_release
 from django.core.management.base import BaseCommand, CommandError
+
+from django_versioned_models.services import lock_release
 
 
 class Command(BaseCommand):

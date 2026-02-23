@@ -9,8 +9,9 @@ Usage:
     python manage.py unlock_release --release-version v1.2.0
 """
 
-from django_versioned_models.models import Release
 from django.core.management.base import BaseCommand, CommandError
+
+from django_versioned_models.models import Release
 
 
 class Command(BaseCommand):

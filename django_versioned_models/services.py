@@ -56,7 +56,8 @@ def get_versioned_models_ordered():
 def create_release(version: str, based_on_version: str, description: str = "", user=None):
     """
     Create a new release branched from an existing locked one.
-    Copies all versioned rows automatically.
+    Copies all versioned rows automatically, including inactive ones —
+    so architects can reactivate them in the new release if needed.
     """
     from django_versioned_models.models import Release
 
@@ -86,8 +87,12 @@ def create_release(version: str, based_on_version: str, description: str = "", u
 
 
 def _copy_model_rows(model, source_release, new_release, id_mapping):
-    """Copy all rows of a model from source_release to new_release, remapping FKs."""
-    source_rows = model.objects.for_release(source_release).select_related("release")
+    """
+    Copy all rows of a model from source_release to new_release, remapping FKs.
+    Uses all_rows() to include inactive rows — architects can reactivate them
+    in the new release if needed. Active state is preserved as-is.
+    """
+    source_rows = model.objects.all_rows(source_release).select_related("release")
     model_key = f"{model._meta.app_label}.{model.__name__}"
     id_mapping[model_key] = {}
 
@@ -119,7 +124,7 @@ def _copy_model_rows(model, source_release, new_release, id_mapping):
 
         new_row = model(**field_values, release=new_release)
         model.objects.bulk_create([new_row])
-        new_row = model.objects.for_release(new_release).order_by("-pk").first()
+        new_row = model.objects.all_rows(new_release).order_by("-pk").first()
         id_mapping[model_key][old_id] = new_row
 
 
