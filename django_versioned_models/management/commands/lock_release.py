@@ -20,9 +20,9 @@ class Command(BaseCommand):
     def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument("--release-version", required=True)
 
-    def handle(self, **options: Any) -> None:
+    def handle(self, **kwargs: Any) -> None:
         try:
-            release = lock_release(options["release_version"])
+            release = lock_release(kwargs["release_version"])
         except ValueError as e:
             raise CommandError(str(e)) from e
 

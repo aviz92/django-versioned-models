@@ -24,8 +24,8 @@ class Command(BaseCommand):
     def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument("--release-version", required=True)
 
-    def handle(self, **options: Any) -> None:
-        version = options["release_version"]
+    def handle(self, **kwargs: Any) -> None:
+        version = kwargs["release_version"]
 
         try:
             release = Release.objects.get(version=version)

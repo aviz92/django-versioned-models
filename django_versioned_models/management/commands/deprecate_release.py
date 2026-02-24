@@ -27,15 +27,15 @@ class Command(BaseCommand):
             help="Un-deprecate a previously deprecated release",
         )
 
-    def handle(self, **options: Any) -> None:
-        version = options["release_version"]
+    def handle(self, **kwargs: Any) -> None:
+        version = kwargs["release_version"]
 
         try:
             release = Release.objects.get(version=version)
         except Release.DoesNotExist as exc:
             raise CommandError(f'Release "{version}" does not exist.') from exc
 
-        if options["undo"]:
+        if kwargs["undo"]:
             if not release.is_deprecated:
                 raise CommandError(f'Release "{version}" is not deprecated.')
             release.undeprecate()
