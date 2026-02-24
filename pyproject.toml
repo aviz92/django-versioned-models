@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "django-versioned-models"
-version = "0.1.3"
+version = "1.0.0"
 description = "Drop-in versioning for Django models — releases, data status workflow, and CI integration"
 readme = "README.md"
 license = { text = "MIT" }
