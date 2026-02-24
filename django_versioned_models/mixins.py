@@ -76,7 +76,7 @@ class VersionedModel(models.Model):
                 active=True,
             )
 
-        def all_rows(self, release):
+        def all_rows(self, release: models.Model) -> models.QuerySet:
             """
             All rows including inactive — for copying between releases and admin/audit use.
             Do not use for business logic.
