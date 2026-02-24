@@ -9,7 +9,9 @@ Usage:
     python manage.py deprecate_release --release-version v1.0.0 --undo
 """
 
-from django.core.management.base import BaseCommand, CommandError
+from typing import Any
+
+from django.core.management.base import BaseCommand, CommandError, CommandParser
 
 from django_versioned_models.models import Release
 
@@ -17,7 +19,7 @@ from django_versioned_models.models import Release
 class Command(BaseCommand):
     help = "Deprecate a release (soft delete — data is preserved)"
 
-    def add_arguments(self, parser):
+    def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument("--release-version", required=True)
         parser.add_argument(
             "--undo",
@@ -25,13 +27,13 @@ class Command(BaseCommand):
             help="Un-deprecate a previously deprecated release",
         )
 
-    def handle(self, *args, **options):
+    def handle(self, **options: Any) -> None:
         version = options["release_version"]
 
         try:
             release = Release.objects.get(version=version)
-        except Release.DoesNotExist:
-            raise CommandError(f'Release "{version}" does not exist.')
+        except Release.DoesNotExist as exc:
+            raise CommandError(f'Release "{version}" does not exist.') from exc
 
         if options["undo"]:
             if not release.is_deprecated:

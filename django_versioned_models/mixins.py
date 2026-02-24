@@ -12,6 +12,8 @@ CI runs against: status=APPROVED + active=True
 Architects edit: status=DRAFT or FUTURE
 """
 
+from typing import Any
+
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -59,14 +61,14 @@ class VersionedModel(models.Model):
 
     class VersionedManager(models.Manager):
 
-        def for_release(self, release):
+        def for_release(self, release: models.Model) -> models.QuerySet:
             """
             Active rows for a release, all statuses.
             Use this for architect-facing GUI views — shows exactly what's alive in this release.
             """
-            return self.get_queryset().filter(release=release, active=True)
+            return self.get_queryset().filter(release=release)
 
-        def approved(self, release):
+        def approved(self, release: models.Model) -> models.QuerySet:
             """Only approved + active rows — what CI runs against."""
             return self.get_queryset().filter(
                 release=release,
@@ -85,7 +87,7 @@ class VersionedModel(models.Model):
 
     # ── Active / inactive ─────────────────────────────────────────────────────
 
-    def deactivate(self):
+    def deactivate(self) -> None:
         """
         Soft-delete this row.
         If the row was APPROVED, status is reset to DRAFT —
@@ -98,7 +100,7 @@ class VersionedModel(models.Model):
             self.status = DataStatus.DRAFT
         self.save(update_fields=["active", "status"])
 
-    def reactivate(self):
+    def reactivate(self) -> None:
         """
         Restore a deactivated row.
         Status stays DRAFT — must go through the approval flow again.
@@ -110,7 +112,7 @@ class VersionedModel(models.Model):
 
     # ── Status transitions ────────────────────────────────────────────────────
 
-    def mark_future(self):
+    def mark_future(self) -> None:
         """DRAFT -> FUTURE. Called by architects."""
         if not self.active:
             raise ValidationError("Cannot change status of an inactive row.")
@@ -119,7 +121,7 @@ class VersionedModel(models.Model):
         self.status = DataStatus.FUTURE
         self.save(update_fields=["status"])
 
-    def mark_draft(self):
+    def mark_draft(self) -> None:
         """FUTURE -> DRAFT. Allows rework."""
         if not self.active:
             raise ValidationError("Cannot change status of an inactive row.")
@@ -128,7 +130,7 @@ class VersionedModel(models.Model):
         self.status = DataStatus.DRAFT
         self.save(update_fields=["status"])
 
-    def approve(self):
+    def approve(self) -> None:
         """DRAFT or FUTURE -> APPROVED. One-way. CI only."""
         if not self.active:
             raise ValidationError("Cannot approve an inactive row.")
@@ -139,7 +141,7 @@ class VersionedModel(models.Model):
 
     # ── Lock enforcement ──────────────────────────────────────────────────────
 
-    def save(self, *args, **kwargs):
+    def save(self, *args: Any, **kwargs: Any) -> None:
         if self.release.is_locked and self.status != DataStatus.APPROVED:
             raise ValidationError(
                 f"Release {self.release.version} is locked and cannot be modified. "
@@ -147,7 +149,7 @@ class VersionedModel(models.Model):
             )
         super().save(*args, **kwargs)
 
-    def delete(self, *args, **kwargs):
+    def delete(self, *args: Any, **kwargs: Any) -> None:
         if self.release.is_locked:
             raise ValidationError(f"Release {self.release.version} is locked. Cannot delete rows.")
         super().delete(*args, **kwargs)

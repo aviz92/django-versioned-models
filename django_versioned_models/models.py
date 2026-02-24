@@ -6,6 +6,7 @@ Every versioned row in every table has a FK to Release.
 
 from django.contrib.auth import get_user_model
 from django.db import models
+from django.utils import timezone
 
 User = get_user_model()
 
@@ -43,7 +44,7 @@ class Release(models.Model):
         app_label = "django_versioned_models"
         ordering = ["-created_at"]
 
-    def __str__(self):
+    def __str__(self) -> str:
         if self.is_deprecated:
             status = "🗄️️"
         elif self.is_locked:
@@ -52,21 +53,17 @@ class Release(models.Model):
             status = "✏️"
         return f"{status} {self.version}"
 
-    def lock(self):
-        from django.utils import timezone
-
+    def lock(self) -> None:
         self.is_locked = True
         self.locked_at = timezone.now()
         self.save(update_fields=["is_locked", "locked_at"])
 
-    def deprecate(self):
-        from django.utils import timezone
-
+    def deprecate(self) -> None:
         self.is_deprecated = True
         self.deprecated_at = timezone.now()
         self.save(update_fields=["is_deprecated", "deprecated_at"])
 
-    def undeprecate(self):
+    def undeprecate(self) -> None:
         self.is_deprecated = False
         self.deprecated_at = None
         self.save(update_fields=["is_deprecated", "deprecated_at"])

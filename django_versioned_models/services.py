@@ -4,19 +4,21 @@ Core services — create_release, lock_release, and auto-discovery.
 
 from django.apps import apps
 from django.db import transaction
+from django.db.models import Model
+
+from django_versioned_models.mixins import VersionedModel
+from django_versioned_models.models import Release
 
 
-def get_versioned_models():
+def get_versioned_models() -> list[type[Model]]:
     """
     Auto-discover all models that inherit from VersionedModel.
     No manual registration needed — just inherit and you're in.
     """
-    from django_versioned_models.mixins import VersionedModel
-
     return [model for model in apps.get_models() if issubclass(model, VersionedModel) and model is not VersionedModel]
 
 
-def get_versioned_models_ordered():
+def get_versioned_models_ordered() -> list[type[VersionedModel]]:
     """
     Returns versioned models sorted by FK dependencies (parents before children).
     Uses Kahn's topological sort algorithm.
@@ -26,7 +28,7 @@ def get_versioned_models_ordered():
 
     graph = {m: set() for m in models}
     for model in models:
-        for field in model._meta.get_fields():
+        for field in model._meta.get_fields():  # pylint: disable=W0212
             if not field.is_relation or not field.many_to_one:
                 continue
             related = field.related_model
@@ -36,7 +38,7 @@ def get_versioned_models_ordered():
     ordered = []
     no_deps = [m for m, deps in graph.items() if not deps]
 
-    while no_deps:
+    while no_deps:  # pylint: disable=W0149
         m = no_deps.pop()
         ordered.append(m)
         for other, deps in graph.items():
@@ -53,18 +55,16 @@ def get_versioned_models_ordered():
 
 
 @transaction.atomic
-def create_release(version: str, based_on_version: str, description: str = "", user=None):
+def create_release(version: str, based_on_version: str, description: str = "", user: int | None = None) -> Release:
     """
     Create a new release branched from an existing locked one.
     Copies all versioned rows automatically, including inactive ones —
     so architects can reactivate them in the new release if needed.
     """
-    from django_versioned_models.models import Release
-
     try:
         source_release = Release.objects.get(version=based_on_version)
-    except Release.DoesNotExist:
-        raise ValueError(f'Source release "{based_on_version}" does not exist.')
+    except Release.DoesNotExist as exc:
+        raise ValueError(f'Source release "{based_on_version}" does not exist.') from exc
 
     if not source_release.is_locked:
         raise ValueError(
@@ -86,7 +86,9 @@ def create_release(version: str, based_on_version: str, description: str = "", u
     return new_release
 
 
-def _copy_model_rows(model, source_release, new_release, id_mapping):
+def _copy_model_rows(
+    model: type[VersionedModel], source_release: Release, new_release: Release, id_mapping: dict
+) -> None:
     """
     Copy all rows of a model from source_release to new_release, remapping FKs.
     Uses all_rows() to include inactive rows — architects can reactivate them
@@ -100,7 +102,7 @@ def _copy_model_rows(model, source_release, new_release, id_mapping):
         old_id = row.pk
         field_values = {}
 
-        for field in model._meta.get_fields():
+        for field in model._meta.get_fields():  # pylint: disable=W0212
             if not hasattr(field, "column"):
                 continue
             if field.primary_key:
@@ -110,10 +112,9 @@ def _copy_model_rows(model, source_release, new_release, id_mapping):
 
             if field.is_relation and field.many_to_one:
                 related_model = field.related_model
-                related_key = f"{related_model._meta.app_label}.{related_model.__name__}"
-                if related_key in id_mapping:
-                    old_fk_id = getattr(row, f"{field.name}_id")
-                    if old_fk_id is not None:
+                # pylint: disable = W0212
+                if (related_key := f"{related_model._meta.app_label}.{related_model.__name__}") in id_mapping:
+                    if (old_fk_id := getattr(row, f"{field.name}_id")) is not None:
                         new_related = id_mapping[related_key].get(old_fk_id)
                         field_values[f"{field.name}_id"] = new_related.pk if new_related else old_fk_id
                     else:
@@ -129,14 +130,12 @@ def _copy_model_rows(model, source_release, new_release, id_mapping):
 
 
 @transaction.atomic
-def lock_release(version: str):
+def lock_release(version: str) -> Release:
     """Lock a release — immutable after this."""
-    from django_versioned_models.models import Release
-
     try:
         release = Release.objects.get(version=version)
-    except Release.DoesNotExist:
-        raise ValueError(f'Release "{version}" does not exist.')
+    except Release.DoesNotExist as exc:
+        raise ValueError(f'Release "{version}" does not exist.') from exc
 
     if release.is_locked:
         raise ValueError(f'Release "{version}" is already locked.')

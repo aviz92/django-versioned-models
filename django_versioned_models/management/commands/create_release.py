@@ -12,7 +12,9 @@ Usage:
     python manage.py create_release --release-version v1.1.1 --based-on v1.1.0
 """
 
-from django.core.management.base import BaseCommand, CommandError
+from typing import Any
+
+from django.core.management.base import BaseCommand, CommandError, CommandParser
 
 from django_versioned_models.models import Release
 from django_versioned_models.services import create_release
@@ -21,12 +23,12 @@ from django_versioned_models.services import create_release
 class Command(BaseCommand):
     help = "Create a new release"
 
-    def add_arguments(self, parser):
+    def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument("--release-version", required=True, help="New version, e.g. v1.0.0")
         parser.add_argument("--based-on", default=None, help="Source version to copy from (optional)")
         parser.add_argument("--description", default="", help="Release notes")
 
-    def handle(self, *args, **options):
+    def handle(self, **options: Any) -> None:
         version = options["release_version"]
         based_on = options["based_on"]
         description = options["description"]
@@ -54,7 +56,7 @@ class Command(BaseCommand):
                     description=description,
                 )
             except ValueError as e:
-                raise CommandError(str(e))
+                raise CommandError(str(e)) from e
 
             self.stdout.write(
                 self.style.SUCCESS(
