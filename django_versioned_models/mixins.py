@@ -8,6 +8,8 @@ CI runs against: status=APPROVED
 Architects edit: status=DRAFT or FUTURE
 """
 
+from typing import Any
+
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -45,11 +47,11 @@ class VersionedModel(models.Model):
 
     class VersionedManager(models.Manager):
 
-        def for_release(self, release):
+        def for_release(self, release: models.Model) -> models.QuerySet:
             """All rows for a release, regardless of status."""
             return self.get_queryset().filter(release=release)
 
-        def approved(self, release):
+        def approved(self, release: models.Model) -> models.QuerySet:
             """Only approved rows — what CI runs against."""
             return self.get_queryset().filter(
                 release=release,
@@ -60,21 +62,21 @@ class VersionedModel(models.Model):
 
     # ── Status transitions ────────────────────────────────────────────────────
 
-    def mark_future(self):
+    def mark_future(self) -> None:
         """DRAFT -> FUTURE. Called by architects."""
         if self.status != DataStatus.DRAFT:
             raise ValidationError(f"Can only move to FUTURE from DRAFT. Current status: {self.status}")
         self.status = DataStatus.FUTURE
         self.save(update_fields=["status"])
 
-    def mark_draft(self):
+    def mark_draft(self) -> None:
         """FUTURE -> DRAFT. Allows rework."""
         if self.status != DataStatus.FUTURE:
             raise ValidationError(f"Can only move back to DRAFT from FUTURE. Current status: {self.status}")
         self.status = DataStatus.DRAFT
         self.save(update_fields=["status"])
 
-    def approve(self):
+    def approve(self) -> None:
         """DRAFT or FUTURE -> APPROVED. One-way. CI only."""
         if self.status == DataStatus.APPROVED:
             raise ValidationError("Row is already approved.")
@@ -83,7 +85,7 @@ class VersionedModel(models.Model):
 
     # ── Lock enforcement ──────────────────────────────────────────────────────
 
-    def save(self, *args, **kwargs):
+    def save(self, *args: Any, **kwargs: Any) -> None:
         if self.release.is_locked and self.status != DataStatus.APPROVED:
             raise ValidationError(
                 f"Release {self.release.version} is locked and cannot be modified. "
@@ -91,7 +93,7 @@ class VersionedModel(models.Model):
             )
         super().save(*args, **kwargs)
 
-    def delete(self, *args, **kwargs):
+    def delete(self, *args: Any, **kwargs: Any) -> None:
         if self.release.is_locked:
             raise ValidationError(f"Release {self.release.version} is locked. Cannot delete rows.")
         super().delete(*args, **kwargs)

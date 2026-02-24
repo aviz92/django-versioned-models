@@ -9,23 +9,26 @@ Usage:
     python manage.py unlock_release --release-version v1.2.0
 """
 
+from typing import Any
+
+from django.core.management.base import BaseCommand, CommandError, CommandParser
+
 from django_versioned_models.models import Release
-from django.core.management.base import BaseCommand, CommandError
 
 
 class Command(BaseCommand):
     help = "Unlock a release to allow editing (only for unreleased versions)"
 
-    def add_arguments(self, parser):
+    def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument("--release-version", required=True)
 
-    def handle(self, *args, **options):
+    def handle(self, **options: Any) -> None:
         version = options["release_version"]
 
         try:
             release = Release.objects.get(version=version)
-        except Release.DoesNotExist:
-            raise CommandError(f'Release "{version}" does not exist.')
+        except Release.DoesNotExist as exc:
+            raise CommandError(f'Release "{version}" does not exist.') from exc
 
         if not release.is_locked:
             raise CommandError(f'Release "{version}" is not locked.')
@@ -37,8 +40,7 @@ class Command(BaseCommand):
                 f"   Only do this if this version has NOT been deployed to production.\n"
             )
         )
-        confirm = input("Type the version name to confirm: ")
-        if confirm != version:
+        if input("Type the version name to confirm: ") != version:
             raise CommandError("Confirmation failed. Aborting.")
 
         release.is_locked = False
