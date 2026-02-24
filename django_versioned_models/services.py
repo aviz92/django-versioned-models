@@ -95,7 +95,7 @@ def _copy_model_rows(
     in the new release if needed. Active state is preserved as-is.
     """
     source_rows = model.objects.all_rows(source_release).select_related("release")
-    model_key = f"{model._meta.app_label}.{model.__name__}"
+    model_key = f"{model._meta.app_label}.{model.__name__}"  # pylint: disable=W0212
     id_mapping[model_key] = {}
 
     for row in source_rows:
