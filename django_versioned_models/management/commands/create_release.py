@@ -28,10 +28,10 @@ class Command(BaseCommand):
         parser.add_argument("--based-on", default=None, help="Source version to copy from (optional)")
         parser.add_argument("--description", default="", help="Release notes")
 
-    def handle(self, **options: Any) -> None:
-        version = options["release_version"]
-        based_on = options["based_on"]
-        description = options["description"]
+    def handle(self, **kwargs: Any) -> None:
+        version = kwargs["release_version"]
+        based_on = kwargs["based_on"]
+        description = kwargs["description"]
 
         if not based_on:
             # Standalone release — no source, unlocked so architects can add data
