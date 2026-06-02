@@ -15,17 +15,15 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Framework :: Django",
     "Framework :: Django :: 5.0",
-    "Framework :: Django :: 6.0",
+    "Framework :: Django :: 5.1",
+    "Framework :: Django :: 5.2",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
 ]
 
 dependencies = [
-    "django>=4.2",
-    "pre-commit>=4.5.1",
-    "pytest>=9.0.2",
-    "pytest-plugins>=2.0.2",
+    "django>=5.2",
 ]
 
 [project.optional-dependencies]
@@ -33,7 +31,9 @@ drf = [
     "djangorestframework>=3.14",
 ]
 dev = [
-    "pytest",
+    "pre-commit>=4.5.1",
+    "pytest>=9.0.2",
+    "pytest-plugins>=2.0.2",
     "pytest-django",
     "djangorestframework>=3.14",
 ]

@@ -16,5 +16,3 @@ Quick start:
     class MyModel(VersionedModel):
         name = models.CharField(max_length=255)
 """
-
-default_app_config = "django_versioned_models.apps.DjangoVersionedModelsConfig"

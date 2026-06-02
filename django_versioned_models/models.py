@@ -30,6 +30,10 @@ class Release(models.Model):
         default=False,
         help_text="Deprecated releases are hidden by default. Data is preserved.",
     )
+    deployed = models.BooleanField(
+        default=False,
+        help_text="Deployed releases cannot be unlocked. Must be locked before deploying.",
+    )
     created_by = models.ForeignKey(
         User,
         null=True,
@@ -39,6 +43,7 @@ class Release(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     locked_at = models.DateTimeField(null=True, blank=True)
     deprecated_at = models.DateTimeField(null=True, blank=True)
+    deployed_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         app_label = "django_versioned_models"
@@ -47,6 +52,8 @@ class Release(models.Model):
     def __str__(self) -> str:
         if self.is_deprecated:
             status = "🗄️️"
+        elif self.deployed:
+            status = "🚀"
         elif self.is_locked:
             status = "🔒"
         else:
@@ -57,6 +64,13 @@ class Release(models.Model):
         self.is_locked = True
         self.locked_at = timezone.now()
         self.save(update_fields=["is_locked", "locked_at"])
+
+    def deploy(self) -> None:
+        if not self.is_locked:
+            raise ValueError(f'Release "{self.version}" must be locked before it can be deployed.')
+        self.deployed = True
+        self.deployed_at = timezone.now()
+        self.save(update_fields=["deployed", "deployed_at"])
 
     def deprecate(self) -> None:
         self.is_deprecated = True
