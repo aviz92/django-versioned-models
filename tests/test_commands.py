@@ -12,11 +12,11 @@ from tests.testapp.models import Category, Product
 
 @pytest.mark.django_db
 class TestCreateReleaseCommand:
-    def test_standalone_release_is_created(self, db) -> None:
+    def test_standalone_release_is_created(self, db: None) -> None:
         call_command("create_release", release_version="v1.0.0", stdout=StringIO())
         assert Release.objects.filter(version="v1.0.0").exists(), "Standalone release must be created"
 
-    def test_standalone_release_is_unlocked(self, db) -> None:
+    def test_standalone_release_is_unlocked(self, db: None) -> None:
         call_command("create_release", release_version="v1.0.0", stdout=StringIO())
         r = Release.objects.get(version="v1.0.0")
         assert r.is_locked is False, "Standalone release must be unlocked"
@@ -31,7 +31,7 @@ class TestCreateReleaseCommand:
         new = Release.objects.get(version="v3.0.0")
         assert Category.objects.all_rows(new).count() > 0, "Branched release must copy rows"
 
-    def test_branched_release_source_not_found_raises(self, db) -> None:
+    def test_branched_release_source_not_found_raises(self, db: None) -> None:
         with pytest.raises(CommandError, match="does not exist"):
             call_command(
                 "create_release",
@@ -57,7 +57,7 @@ class TestLockReleaseCommand:
         release.refresh_from_db()
         assert release.is_locked is True, "lock_release command must lock the release"
 
-    def test_release_not_found_raises(self, db) -> None:
+    def test_release_not_found_raises(self, db: None) -> None:
         with pytest.raises(CommandError, match="does not exist"):
             call_command("lock_release", release_version="ghost", stdout=StringIO())
 
@@ -78,7 +78,7 @@ class TestUnlockReleaseCommand:
         locked_release.refresh_from_db()
         assert locked_release.locked_at is None, "locked_at must be cleared after unlock"
 
-    def test_release_not_found_raises(self, db) -> None:
+    def test_release_not_found_raises(self, db: None) -> None:
         with pytest.raises(CommandError, match="does not exist"):
             call_command("unlock_release", release_version="ghost", force=True, stdout=StringIO())
 
@@ -115,7 +115,7 @@ class TestDeployReleaseCommand:
         locked_release.refresh_from_db()
         assert locked_release.deployed_at is not None, "deployed_at must be set"
 
-    def test_release_not_found_raises(self, db) -> None:
+    def test_release_not_found_raises(self, db: None) -> None:
         with pytest.raises(CommandError, match="does not exist"):
             call_command("deploy_release", release_version="ghost", stdout=StringIO())
 
@@ -151,14 +151,14 @@ class TestDeprecateReleaseCommand:
         with pytest.raises(CommandError, match="not deprecated"):
             call_command("deprecate_release", release_version=release.version, undo=True, stdout=StringIO())
 
-    def test_release_not_found_raises(self, db) -> None:
+    def test_release_not_found_raises(self, db: None) -> None:
         with pytest.raises(CommandError, match="does not exist"):
             call_command("deprecate_release", release_version="ghost", stdout=StringIO())
 
 
 @pytest.mark.django_db
 class TestApproveReleaseCommand:
-    def test_approves_all_draft_rows(self, db) -> None:
+    def test_approves_all_draft_rows(self, db: None) -> None:
         r = Release.objects.create(version="v-approve")
         Category.objects.create(name="A", release=r)
         Category.objects.create(name="B", release=r)
@@ -167,7 +167,7 @@ class TestApproveReleaseCommand:
             Category.objects.filter(release=r, status=DataStatus.APPROVED).count() == 2
         ), "All DRAFT rows must be approved"
 
-    def test_skips_inactive_rows(self, db) -> None:
+    def test_skips_inactive_rows(self, db: None) -> None:
         r = Release.objects.create(version="v-approve-skip")
         active = Category.objects.create(name="Active", release=r)
         inactive = Category.objects.create(name="Inactive", release=r)
@@ -178,7 +178,7 @@ class TestApproveReleaseCommand:
         active.refresh_from_db()
         assert active.status == DataStatus.APPROVED, "Active DRAFT rows must be approved"
 
-    def test_skips_future_rows(self, db) -> None:
+    def test_skips_future_rows(self, db: None) -> None:
         r = Release.objects.create(version="v-approve-future")
         cat = Category.objects.create(name="Future Cat", release=r)
         cat.mark_future()
@@ -186,7 +186,7 @@ class TestApproveReleaseCommand:
         cat.refresh_from_db()
         assert cat.status == DataStatus.FUTURE, "FUTURE rows must remain FUTURE after approve_release"
 
-    def test_approves_across_multiple_models(self, db) -> None:
+    def test_approves_across_multiple_models(self, db: None) -> None:
         r = Release.objects.create(version="v-approve-multi")
         cat = Category.objects.create(name="Cat", release=r)
         Product.objects.create(name="Prod", release=r, category=cat)
@@ -194,6 +194,6 @@ class TestApproveReleaseCommand:
         assert Category.objects.get(pk=cat.pk).status == DataStatus.APPROVED, "Category must be approved"
         assert Product.objects.filter(release=r, status=DataStatus.APPROVED).count() == 1, "Product must be approved"
 
-    def test_release_not_found_raises(self, db) -> None:
+    def test_release_not_found_raises(self, db: None) -> None:
         with pytest.raises(CommandError, match="does not exist"):
             call_command("approve_release", release_version="ghost", stdout=StringIO())

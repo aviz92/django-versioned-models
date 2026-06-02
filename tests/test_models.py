@@ -107,6 +107,6 @@ class TestReleaseConstraints:
         child = Release.objects.create(version="v2.0.0", based_on=locked_release)
         assert child.based_on == locked_release, "based_on FK must be stored correctly"
 
-    def test_created_by_defaults_to_null(self, db) -> None:
+    def test_created_by_defaults_to_null(self, db: None) -> None:
         r = Release.objects.create(version="v99.0.0")
         assert r.created_by is None, "created_by must default to None"

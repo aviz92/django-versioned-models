@@ -1,6 +1,9 @@
-import pytest
+from unittest.mock import patch
 
-from django_versioned_models.mixins import DataStatus
+import pytest
+from django.contrib.auth import get_user_model
+
+from django_versioned_models.mixins import DataStatus, VersionedModel
 from django_versioned_models.models import Release
 from django_versioned_models.services import (
     create_release,
@@ -19,8 +22,6 @@ class TestGetVersionedModels:
         assert Product in models, "Product must be discovered"
 
     def test_excludes_abstract_base(self) -> None:
-        from django_versioned_models.mixins import VersionedModel
-
         models = get_versioned_models()
         assert VersionedModel not in models, "Abstract VersionedModel base must not appear"
 
@@ -45,7 +46,7 @@ class TestGetVersionedModelsOrdered:
 
 @pytest.mark.django_db
 class TestCreateRelease:
-    def test_raises_when_source_release_does_not_exist(self, db) -> None:
+    def test_raises_when_source_release_does_not_exist(self, db: None) -> None:
         with pytest.raises(ValueError, match="does not exist"):
             create_release(version="v2.0.0", based_on_version="nonexistent")
 
@@ -69,11 +70,9 @@ class TestCreateRelease:
         )
         assert new.description == "Patch release", "description must be stored"
 
-    def test_new_release_stores_user_id(self, locked_release_with_data: Release, db) -> None:
-        from django.contrib.auth import get_user_model
-
-        User = get_user_model()
-        user = User.objects.create_user(username="ci_bot", password="x")
+    def test_new_release_stores_user_id(self, locked_release_with_data: Release, db: None) -> None:
+        user_model = get_user_model()
+        user = user_model.objects.create_user(username="ci_bot", password="x")
         new = create_release(
             version="v3.0.0",
             based_on_version=locked_release_with_data.version,
@@ -116,8 +115,6 @@ class TestCreateRelease:
         assert new_approved == source_approved, "Row statuses must be preserved in the copy"
 
     def test_is_atomic_rolls_back_on_error(self, locked_release_with_data: Release) -> None:
-        from unittest.mock import patch
-
         release_count_before = Release.objects.count()
         with patch(
             "django_versioned_models.services._copy_model_rows",
@@ -143,7 +140,7 @@ class TestLockRelease:
         locked.refresh_from_db()
         assert locked.locked_at is not None, "locked_at must be set by lock_release()"
 
-    def test_lock_release_not_found_raises(self, db) -> None:
+    def test_lock_release_not_found_raises(self, db: None) -> None:
         with pytest.raises(ValueError, match="does not exist"):
             lock_release("nonexistent-version")
 

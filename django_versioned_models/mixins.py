@@ -146,13 +146,13 @@ class VersionedModel(models.Model):
         # direct assignment). Falls back to a single-column DB query to avoid SELECT *.
         # Django stores FK instances via field.set_cached_value — must use get_cached_value,
         # not __dict__["release"], because the cache key is "_release_cache", not "release".
-        release_field = self.__class__._meta.get_field("release")
+        release_field = self.__class__._meta.get_field("release")  # pylint: disable=W0212
         try:
             cached = release_field.get_cached_value(self)
             return cached.is_locked
         except KeyError:
             pass
-        from django_versioned_models.models import Release  # lazy — avoids circular import at module level
+        from django_versioned_models.models import Release  # pylint: disable=C0415
 
         return Release.objects.filter(pk=self.release_id).values_list("is_locked", flat=True).first() or False
 

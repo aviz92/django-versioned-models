@@ -17,7 +17,7 @@ class TestVersionedManager:
         rows = Category.objects.for_release(release)
         assert category not in rows, "for_release must exclude inactive rows"
 
-    def test_for_release_excludes_other_releases(self, db) -> None:
+    def test_for_release_excludes_other_releases(self, db: None) -> None:
         r1 = Release.objects.create(version="r1")
         r2 = Release.objects.create(version="r2")
         Category.objects.create(name="In R1", release=r1)
@@ -48,7 +48,7 @@ class TestVersionedManager:
         rows = Category.objects.all_rows(release)
         assert category in rows, "all_rows() must include inactive rows"
 
-    def test_all_rows_excludes_other_releases(self, db) -> None:
+    def test_all_rows_excludes_other_releases(self, db: None) -> None:
         r1 = Release.objects.create(version="r1")
         r2 = Release.objects.create(version="r2")
         Category.objects.create(name="In R1", release=r1)
@@ -172,7 +172,7 @@ class TestSaveLockEnforcement:
         with pytest.raises(ValidationError, match="locked"):
             cat.save()
 
-    def test_save_approved_to_locked_release_succeeds(self, db) -> None:
+    def test_save_approved_to_locked_release_succeeds(self, db: None) -> None:
         r = Release.objects.create(version="v-lock-approved")
         cat = Category.objects.create(name="Cat", release=r)
         r.lock()
@@ -186,34 +186,34 @@ class TestSaveLockEnforcement:
         cat = Category(name="New", release=release, status=DataStatus.DRAFT)
         cat.save()  # must not raise
 
-    def test_is_release_locked_uses_instance_cache(self, db) -> None:
+    def test_is_release_locked_uses_instance_cache(self, db: None) -> None:
         """_is_release_locked() must use the cached release object, not hit the DB."""
         r = Release.objects.create(version="v-cache-test")
         cat = Category(name="Cat", release=r)  # release is cached via direct assignment
         # Mark as locked on the Python object only — do NOT persist to DB
         r.is_locked = True
-        assert cat._is_release_locked() is True, "Must read from cached release instance"
+        assert cat._is_release_locked() is True, "Must read from cached release instance"  # pylint: disable=W0212
 
-    def test_is_release_locked_falls_back_to_db(self, db) -> None:
+    def test_is_release_locked_falls_back_to_db(self, db: None) -> None:
         """_is_release_locked() must query DB when release is not cached."""
         r = Release.objects.create(version="v-db-fallback")
         cat = Category.objects.create(name="Cat", release=r)
         r.lock()
         # Load fresh without select_related so the FK instance is NOT in the cache
         fresh_cat = Category.objects.get(pk=cat.pk)
-        release_field = fresh_cat.__class__._meta.get_field("release")
+        release_field = fresh_cat.__class__._meta.get_field("release")  # pylint: disable=W0212
         try:
             release_field.get_cached_value(fresh_cat)
             cached = True
         except KeyError:
             cached = False
         assert not cached, "release must not be cached on a plain .get()"
-        assert fresh_cat._is_release_locked() is True, "Must correctly read is_locked from DB"
+        assert fresh_cat._is_release_locked() is True, "Must correctly read is_locked from DB"  # pylint: disable=W0212
 
 
 @pytest.mark.django_db
 class TestDeleteLockEnforcement:
-    def test_delete_from_locked_release_raises(self, db) -> None:
+    def test_delete_from_locked_release_raises(self, db: None) -> None:
         r = Release.objects.create(version="v-del-lock")
         cat = Category.objects.create(name="Cat", release=r)
         r.lock()
@@ -229,7 +229,7 @@ class TestDeleteLockEnforcement:
 
 @pytest.mark.django_db
 class TestApproveOnLockedRelease:
-    def test_approve_works_on_locked_release(self, db) -> None:
+    def test_approve_works_on_locked_release(self, db: None) -> None:
         """CI workflow: lock first, then run automation to approve."""
         r = Release.objects.create(version="v-ci-flow")
         cat = Category.objects.create(name="Cat", release=r)
