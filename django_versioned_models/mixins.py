@@ -66,7 +66,7 @@ class VersionedModel(models.Model):
             Active rows for a release, all statuses.
             Use this for architect-facing GUI views — shows exactly what's alive in this release.
             """
-            return self.get_queryset().filter(release=release)
+            return self.get_queryset().filter(release=release, active=True)
 
         def approved(self, release: models.Model) -> models.QuerySet:
             """Only approved + active rows — what CI runs against."""
@@ -141,18 +141,38 @@ class VersionedModel(models.Model):
 
     # ── Lock enforcement ──────────────────────────────────────────────────────
 
+    def _is_release_locked(self) -> bool:
+        # Use Django's FK instance cache when available (e.g. after select_related or
+        # direct assignment). Falls back to a single-column DB query to avoid SELECT *.
+        # Django stores FK instances via field.set_cached_value — must use get_cached_value,
+        # not __dict__["release"], because the cache key is "_release_cache", not "release".
+        release_field = self.__class__._meta.get_field("release")  # pylint: disable=W0212
+        try:
+            cached = release_field.get_cached_value(self)
+            return cached.is_locked
+        except KeyError:
+            pass
+        from django_versioned_models.models import Release  # pylint: disable=C0415
+
+        return Release.objects.filter(pk=self.release_id).values_list("is_locked", flat=True).first() or False
+
     def save(self, *args: Any, **kwargs: Any) -> None:
-        if self.release.is_locked and self.status != DataStatus.APPROVED:
+        if self._is_release_locked() and self.status != DataStatus.APPROVED:
             raise ValidationError(
-                f"Release {self.release.version} is locked and cannot be modified. "
-                f"Create a new release (patch) instead."
+                f"Release {self.release_id} is locked and cannot be modified. " f"Create a new release (patch) instead."
             )
         super().save(*args, **kwargs)
 
     def delete(self, *args: Any, **kwargs: Any) -> None:
-        if self.release.is_locked:
-            raise ValidationError(f"Release {self.release.version} is locked. Cannot delete rows.")
+        if self._is_release_locked():
+            raise ValidationError(f"Release {self.release_id} is locked. Cannot delete rows.")
         super().delete(*args, **kwargs)
 
     class Meta:
         abstract = True
+        indexes = [
+            models.Index(
+                fields=["release", "status", "active"],
+                name="%(app_label)s_%(class)s_rel_sta_act_idx",
+            ),
+        ]

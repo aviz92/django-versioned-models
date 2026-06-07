@@ -21,6 +21,11 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument("--release-version", required=True)
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            help="Skip confirmation prompt (for CI/automation — use with caution)",
+        )
 
     def handle(self, **kwargs: Any) -> None:
         version = kwargs["release_version"]
@@ -30,18 +35,29 @@ class Command(BaseCommand):
         except Release.DoesNotExist as exc:
             raise CommandError(f'Release "{version}" does not exist.') from exc
 
+        if release.deployed:
+            raise CommandError(
+                f'Release "{version}" has been deployed to production and cannot be unlocked. '
+                f"Create a patch release instead: "
+                f"python manage.py create_release --release-version <new> --based-on {version}"
+            )
+
         if not release.is_locked:
             raise CommandError(f'Release "{version}" is not locked.')
 
-        # Safety confirmation
-        self.stdout.write(
-            self.style.WARNING(
-                f"\n⚠️  WARNING: You are about to unlock release {version}.\n"
-                f"   Only do this if this version has NOT been deployed to production.\n"
+        if not kwargs["force"]:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"\n⚠️  WARNING: You are about to unlock release {version}.\n"
+                    f"   Only do this if this version has NOT been deployed to production.\n"
+                )
             )
-        )
-        if input("Type the version name to confirm: ") != version:
-            raise CommandError("Confirmation failed. Aborting.")
+            if input("Type the version name to confirm: ").strip() != version:  # noqa: S322
+                raise CommandError("Confirmation failed. Aborting.")
+        else:
+            self.stdout.write(
+                self.style.WARNING(f"\n⚠️  WARNING: Unlocking release {version} without confirmation (--force).\n")
+            )
 
         release.is_locked = False
         release.locked_at = None

@@ -35,16 +35,18 @@ def get_versioned_models_ordered() -> list[type[VersionedModel]]:
             if related in model_set and related is not model:
                 graph[model].add(related)
 
-    ordered = []
+    ordered: list[type[VersionedModel]] = []
+    ordered_set: set[type[VersionedModel]] = set()
     no_deps = [m for m, deps in graph.items() if not deps]
 
     while no_deps:  # pylint: disable=W0149
         m = no_deps.pop()
         ordered.append(m)
+        ordered_set.add(m)
         for other, deps in graph.items():
             if m in deps:
                 deps.discard(m)
-                if not deps and other not in ordered:
+                if not deps and other not in ordered_set:
                     no_deps.append(other)
 
     if len(ordered) != len(models):
@@ -55,7 +57,7 @@ def get_versioned_models_ordered() -> list[type[VersionedModel]]:
 
 
 @transaction.atomic
-def create_release(version: str, based_on_version: str, description: str = "", user: int | None = None) -> Release:
+def create_release(version: str, based_on_version: str, description: str = "", user_id: int | None = None) -> Release:
     """
     Create a new release branched from an existing locked one.
     Copies all versioned rows automatically, including inactive ones —
@@ -76,7 +78,7 @@ def create_release(version: str, based_on_version: str, description: str = "", u
         description=description,
         based_on=source_release,
         is_locked=False,
-        created_by=user,
+        created_by_id=user_id,
     )
 
     id_mapping = {}
@@ -123,9 +125,7 @@ def _copy_model_rows(
 
             field_values[field.name] = getattr(row, field.attname)
 
-        new_row = model(**field_values, release=new_release)
-        model.objects.bulk_create([new_row])
-        new_row = model.objects.all_rows(new_release).order_by("-pk").first()
+        new_row = model.objects.create(**field_values, release=new_release)
         id_mapping[model_key][old_id] = new_row
 
 

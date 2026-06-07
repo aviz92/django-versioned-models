@@ -49,7 +49,7 @@ class Command(BaseCommand):
         s = "\ndependencies = ["
         for pkg, version in results:
             s += f'\n    "{pkg}>={version}",'
-        s+= "\n]"
+        s += "\n]"
         self.logger.step(s)
 
 

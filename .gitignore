@@ -36,7 +36,7 @@ MANIFEST
 # ============================================================
 
 # uv
-uv.lock
+# uv.lock is intentionally committed for reproducible CI builds
 
 # pipenv
 #Pipfile.lock
@@ -118,7 +118,6 @@ dmypy.json
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
-migrations/
 
 # ============================================================
 # Flask

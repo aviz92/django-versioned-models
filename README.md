@@ -9,25 +9,24 @@
 
 ---
 
-# django-versioned-models
-Drop-in versioning for Django models. Every model that inherits from `VersionedModel` gets full release management, data status workflow, and CI integration — automatically.
+Drop-in versioning for Django models. Every model that inherits from `VersionedModel` gets full release management, a data status workflow, and CI integration — automatically.
 
 ---
 
-🚀 Features
+## 🚀 Features
 
- - **Release management** - every row in every table is tagged to a release. Branch, lock, patch, and deprecate with simple commands.
- - **Data status workflow** - DRAFT → FUTURE → APPROVED. CI only sees approved rows. Live edits by architects never break tests.
- - **Lock enforcement** - locked releases are immutable at the model level. No edits, no deletes, from anywhere — Admin, API, or shell.
- - **Auto-discovery** - inherit VersionedModel and your model is versioned. No registration needed, no matter how many models.
- - **Topological FK sort** - when copying a release, models are duplicated in the correct dependency order automatically.
- - **Soft deprecation** - old releases are hidden by default but data is always preserved and fully reversible.
- - **Standalone releases** - create a release with no source for bootstrapping a new project or parallel versioning.
- - **CI-ready commands** - create_release, approve_release, lock_release and more, ready to plug into any pipeline.
+- **Release management** — every row in every table is tagged to a release. Branch, lock, patch, and deprecate with simple commands.
+- **Data status workflow** — `DRAFT → FUTURE → APPROVED`. CI only sees approved rows. Live architect edits never break tests.
+- **Lock enforcement** — locked releases are fully immutable at the model level. No edits, no deletes — from Admin, API, or shell.
+- **Soft-delete** — rows can be deactivated without deletion. Deactivating an approved row resets it to `DRAFT` so it must be re-approved before CI sees it again.
+- **Auto-discovery** — inherit `VersionedModel` and your model is versioned. No registration needed.
+- **Topological FK sort** — models are duplicated in the correct dependency order automatically when branching a release.
+- **Soft deprecation** — old releases are hidden by default but data is always preserved and reversible.
+- **CI-ready commands** — `create_release`, `approve_release`, `lock_release`, and more, ready to plug into any pipeline.
 
 ---
 
-## Installation
+## 📦 Installation
 
 ```bash
 pip install django-versioned-models
@@ -35,14 +34,14 @@ pip install django-versioned-models
 
 ---
 
-## Quick Start
+## ⚡ Quick Start
 
 ### 1. Add to `INSTALLED_APPS`
 
 ```python
 INSTALLED_APPS = [
     ...
-    'django_versioned_models',
+    "django_versioned_models",
 ]
 ```
 
@@ -52,17 +51,21 @@ INSTALLED_APPS = [
 python manage.py migrate
 ```
 
-### 3. Create your models
+### 3. Define your versioned models
 
 ```python
+from django.db import models
 from django_versioned_models.mixins import VersionedModel
 
-class MyModel(VersionedModel):
+class Product(VersionedModel):
     name = models.CharField(max_length=255)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
 
-    class Meta:
-        unique_together = [('release', 'name')]  # unique per release, not globally
+    class Meta(VersionedModel.Meta):
+        unique_together = [("release", "name")]  # unique per release, not globally
 ```
+
+> **Important:** always inherit `Meta` from `VersionedModel.Meta` to preserve the composite index on `(release, status, active)`.
 
 ### 4. Run migrations for your models
 
@@ -80,130 +83,167 @@ python manage.py create_release --release-version v1.0.0
 ### 6. Add data, then lock
 
 ```bash
-# Add data via Admin or API...
+# Add data via Admin, API, or shell — all rows start as DRAFT
 
 python manage.py lock_release --release-version v1.0.0
 ```
 
 ---
 
-## Ongoing Flow
+## 🔄 Ongoing Workflow
+
+```
+create_release → architects edit (DRAFT) → lock_release → CI approves → lock_release → deploy_release → ship
+```
 
 ```bash
-# Create a new release branched from the previous one
+# Branch from the previous locked release
 python manage.py create_release --release-version v1.1.0 --based-on v1.0.0
 
-# Architects edit data (status=DRAFT by default)
+# Architects add and edit rows (status=DRAFT by default)
 
-# CI approves stable rows
+# Need a correction? Unlock is allowed before deployment
+python manage.py unlock_release --release-version v1.1.0          # interactive
+python manage.py unlock_release --release-version v1.1.0 --force  # CI / automation
+
+# Lock before CI runs — no more edits after this point
+python manage.py lock_release --release-version v1.1.0
+
+# CI approves all stable DRAFT rows (FUTURE rows are left untouched)
 python manage.py approve_release --release-version v1.1.0
 
 # Run tests against approved data only
-pytest --release-version v1.1.0
+pytest
 
-# Lock and ship
-python manage.py lock_release --release-version v1.1.0
+# Lock again if unlocked for corrections, then deploy
+python manage.py lock_release --release-version v1.1.0   # skip if already locked
+python manage.py deploy_release --release-version v1.1.0  # requires locked — permanently blocks unlock
 
-# Bug found after deployment? Create a patch — never modify a locked release
+# Bug found after deployment? Create a patch — never unlock a deployed release
 python manage.py create_release --release-version v1.1.1 --based-on v1.1.0
 ```
 
 ---
 
-## How It Works
+## 🔍 How It Works
 
-Every model that inherits from `VersionedModel` gets two fields added automatically:
+Every model that inherits from `VersionedModel` automatically gets:
 
-- `release` — which version this row belongs to
-- `status` — data readiness (`draft` / `future` / `approved`)
+| Field | Type | Description |
+|-------|------|-------------|
+| `release` | FK → `Release` | Which release this row belongs to |
+| `status` | CharField | Data readiness: `draft` / `future` / `approved` |
+| `active` | BooleanField | Soft-delete flag. Inactive rows are invisible to `for_release()` and `approved()` |
 
-### Data Status Workflow
+**`Release` state fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `is_locked` | BooleanField | Immutable — no edits or deletes allowed |
+| `deployed` | BooleanField | Deployed to production — unlock is permanently blocked |
+| `is_deprecated` | BooleanField | Hidden by default, data preserved |
+
+### Status Flow
 
 ```
-DRAFT <-> FUTURE -> APPROVED  (one-way, CI only)
+DRAFT <-> FUTURE -> APPROVED   (APPROVED is one-way — CI only)
 ```
 
-| Status | Who | Meaning |
-|--------|-----|---------|
+| Status | Set by | Meaning |
+|--------|--------|---------|
 | `DRAFT` | Architects | Being worked on |
-| `FUTURE` | Architects | Planned for a future release |
+| `FUTURE` | Architects | Planned but not ready |
 | `APPROVED` | CI only | Stable — what tests run against |
 
-CI always queries `approved` rows. `DRAFT` and `FUTURE` are invisible to CI — live edits never break tests.
+### Active / Inactive (Soft-Delete)
 
 ```python
-MyModel.objects.approved(release)     # CI — stable rows only
-MyModel.objects.for_release(release)  # everyone — all statuses
+row.deactivate()   # sets active=False, resets APPROVED → DRAFT
+row.reactivate()   # sets active=True, status stays DRAFT — must re-approve
 ```
+
+Deactivating an approved row resets its status to `DRAFT`, so it must go through the approval flow again before CI can see it.
 
 ### Lock Enforcement
 
-Locked releases are immutable. Any attempt to save or delete a row in a locked release raises a `ValidationError` — from the Admin, the API, the shell, anywhere.
+Locked releases are immutable. Any `save()` or `delete()` on a non-approved row raises `ValidationError` — from Admin, API, or shell:
 
 ```python
-# This will raise ValidationError if release is locked
-my_instance.save()
-my_instance.delete()
+row.save()    # raises ValidationError if release is locked and status != APPROVED
+row.delete()  # raises ValidationError if release is locked
 ```
 
-### Auto-Discovery
-
-All models that inherit from `VersionedModel` are discovered automatically on every `create_release`. No manual registration needed. FK dependencies are resolved via topological sort — no ordering required.
+The only operation permitted on a locked release is `approve()` — this is how CI stamps rows after locking.
 
 ---
 
-## Management Commands
+## 📋 Management Commands
 
 | Command | Description |
 |---------|-------------|
 | `create_release --release-version v1.0.0` | Create a standalone release (unlocked) |
-| `create_release --release-version v1.1.0 --based-on v1.0.0` | Branch from a locked release |
-| `approve_release --release-version v1.1.0` | Approve all DRAFT rows (CI only — FUTURE untouched) |
+| `create_release --release-version v1.1.0 --based-on v1.0.0` | Branch from a locked release — copies all rows |
 | `lock_release --release-version v1.1.0` | Lock a release (immutable) |
-| `unlock_release --release-version v1.1.0` | Unlock (only before deployment) |
-| `deprecate_release --release-version v1.0.0` | Soft-delete (data preserved, hidden by default) |
+| `approve_release --release-version v1.1.0` | Approve all active DRAFT rows (CI only — FUTURE and inactive untouched) |
+| `deploy_release --release-version v1.1.0` | Mark as deployed — permanently blocks unlock |
+| `unlock_release --release-version v1.1.0` | Unlock with interactive confirmation (pre-deployment only) |
+| `unlock_release --release-version v1.1.0 --force` | Unlock without prompt — safe for CI/automation (pre-deployment only) |
+| `deprecate_release --release-version v1.0.0` | Soft-deprecate (data preserved, hidden by default) |
 | `deprecate_release --release-version v1.0.0 --undo` | Restore a deprecated release |
 
 ---
 
-## Querying
+## 🗄 Querying
 
 ```python
 from django_versioned_models.models import Release
 
-release = Release.objects.get(version='v1.1.0')
+release = Release.objects.get(version="v1.1.0")
 
-# All rows for a release
-MyModel.objects.for_release(release)
+# Active rows only, all statuses — use in architect-facing GUI views
+Product.objects.for_release(release)
 
-# Approved rows only (CI)
-MyModel.objects.approved(release)
+# Approved + active rows only — use in CI and production logic
+Product.objects.approved(release)
 
-# Filter by status
-MyModel.objects.filter(release=release, status='future')
+# All rows including inactive — use for copy/audit only, not business logic
+Product.objects.all_rows(release)
+
+# Filter by status directly
+Product.objects.for_release(release).filter(status="future")
 ```
 
 ---
 
-## Imports Reference
+## 📥 Imports Reference
 
 ```python
 from django_versioned_models.mixins import VersionedModel, DataStatus
 from django_versioned_models.models import Release
 from django_versioned_models.services import (
-    get_versioned_models,
-    get_versioned_models_ordered,
     create_release,
     lock_release,
+    get_versioned_models,
+    get_versioned_models_ordered,
 )
 ```
 
 ---
 
+## 🧪 Running Tests
+
+```bash
+uv run pytest
+```
+
+---
+
 ## 🤝 Contributing
+
 Contributions are welcome! Please fork the repo, create a branch, and submit a pull request.
 
 ---
 
 ## 📄 License
+
 MIT License — see [LICENSE](LICENSE) for details.
