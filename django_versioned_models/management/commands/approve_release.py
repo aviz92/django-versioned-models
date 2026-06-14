@@ -19,7 +19,10 @@ from django_versioned_models.services import get_versioned_models
 
 
 class Command(BaseCommand):
-    help = "Approve all DRAFT rows in a release (CI only). FUTURE_DEVELOPMENT, FEATURE_DEPRECATION, and inactive rows are untouched."
+    help = (
+        "Approve all DRAFT rows in a release (CI only). "
+        "FUTURE_DEVELOPMENT, FEATURE_DEPRECATION, and inactive rows are untouched."
+    )
 
     def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument("--release-version", required=True)
