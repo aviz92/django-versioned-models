@@ -178,13 +178,13 @@ class TestApproveReleaseCommand:
         active.refresh_from_db()
         assert active.status == DataStatus.APPROVED, "Active DRAFT rows must be approved"
 
-    def test_skips_future_rows(self, db: None) -> None:
+    def test_skips_future_development_rows(self, db: None) -> None:
         r = Release.objects.create(version="v-approve-future")
         cat = Category.objects.create(name="Future Cat", release=r)
-        cat.mark_future()
+        cat.mark_future_development()
         call_command("approve_release", release_version=r.version, stdout=StringIO())
         cat.refresh_from_db()
-        assert cat.status == DataStatus.FUTURE, "FUTURE rows must remain FUTURE after approve_release"
+        assert cat.status == DataStatus.FUTURE_DEVELOPMENT, "FUTURE_DEVELOPMENT rows must remain unchanged after approve_release"
 
     def test_approves_across_multiple_models(self, db: None) -> None:
         r = Release.objects.create(version="v-approve-multi")

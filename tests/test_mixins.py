@@ -27,14 +27,14 @@ class TestVersionedManager:
     def test_approved_returns_approved_active_rows_only(self, release: Release) -> None:
         draft = Category.objects.create(name="Draft", release=release)
         future = Category.objects.create(name="Future", release=release)
-        future.mark_future()
+        future.mark_future_development()
         approved = Category.objects.create(name="Approved", release=release)
         approved.approve()
 
         result = list(Category.objects.approved(release))
         assert approved in result, "approved() must include APPROVED+active rows"
         assert draft not in result, "approved() must exclude DRAFT rows"
-        assert future not in result, "approved() must exclude FUTURE rows"
+        assert future not in result, "approved() must exclude FUTURE_DEVELOPMENT rows"
 
     def test_approved_excludes_inactive_approved_rows(self, release: Release) -> None:
         cat = Category.objects.create(name="Cat", release=release)
@@ -74,11 +74,11 @@ class TestDeactivate:
         category.refresh_from_db()
         assert category.status == DataStatus.DRAFT, "deactivate() must keep DRAFT status as DRAFT"
 
-    def test_deactivate_future_row_keeps_future_status(self, category: Category) -> None:
-        category.mark_future()
+    def test_deactivate_future_development_row_keeps_status(self, category: Category) -> None:
+        category.mark_future_development()
         category.deactivate()
         category.refresh_from_db()
-        assert category.status == DataStatus.FUTURE, "deactivate() must keep FUTURE status"
+        assert category.status == DataStatus.FUTURE_DEVELOPMENT, "deactivate() must keep FUTURE_DEVELOPMENT status"
 
     def test_deactivate_already_inactive_raises(self, category: Category) -> None:
         category.deactivate()
@@ -106,30 +106,54 @@ class TestReactivate:
 
 
 @pytest.mark.django_db
-class TestMarkFuture:
-    def test_mark_future_from_draft_succeeds(self, category: Category) -> None:
-        category.mark_future()
+class TestMarkFutureDevelopment:
+    def test_mark_future_development_from_draft_succeeds(self, category: Category) -> None:
+        category.mark_future_development()
         category.refresh_from_db()
-        assert category.status == DataStatus.FUTURE, "mark_future() must set status to FUTURE"
+        assert category.status == DataStatus.FUTURE_DEVELOPMENT, "mark_future_development() must set status to FUTURE_DEVELOPMENT"
 
-    def test_mark_future_from_approved_raises(self, category: Category) -> None:
+    def test_mark_future_development_from_approved_raises(self, category: Category) -> None:
         category.approve()
         with pytest.raises(ValidationError, match="DRAFT"):
-            category.mark_future()
+            category.mark_future_development()
 
-    def test_mark_future_when_inactive_raises(self, category: Category) -> None:
+    def test_mark_future_development_when_inactive_raises(self, category: Category) -> None:
         category.deactivate()
         with pytest.raises(ValidationError, match="inactive"):
-            category.mark_future()
+            category.mark_future_development()
+
+
+@pytest.mark.django_db
+class TestMarkFeatureDeprecation:
+    def test_mark_feature_deprecation_from_draft_succeeds(self, category: Category) -> None:
+        category.mark_feature_deprecation()
+        category.refresh_from_db()
+        assert category.status == DataStatus.FEATURE_DEPRECATION, "mark_feature_deprecation() must set status to FEATURE_DEPRECATION"
+
+    def test_mark_feature_deprecation_from_approved_raises(self, category: Category) -> None:
+        category.approve()
+        with pytest.raises(ValidationError, match="DRAFT"):
+            category.mark_feature_deprecation()
+
+    def test_mark_feature_deprecation_when_inactive_raises(self, category: Category) -> None:
+        category.deactivate()
+        with pytest.raises(ValidationError, match="inactive"):
+            category.mark_feature_deprecation()
 
 
 @pytest.mark.django_db
 class TestMarkDraft:
-    def test_mark_draft_from_future_succeeds(self, category: Category) -> None:
-        category.mark_future()
+    def test_mark_draft_from_future_development_succeeds(self, category: Category) -> None:
+        category.mark_future_development()
         category.mark_draft()
         category.refresh_from_db()
-        assert category.status == DataStatus.DRAFT, "mark_draft() must set status back to DRAFT"
+        assert category.status == DataStatus.DRAFT, "mark_draft() must set status back to DRAFT from FUTURE_DEVELOPMENT"
+
+    def test_mark_draft_from_feature_deprecation_succeeds(self, category: Category) -> None:
+        category.mark_feature_deprecation()
+        category.mark_draft()
+        category.refresh_from_db()
+        assert category.status == DataStatus.DRAFT, "mark_draft() must set status back to DRAFT from FEATURE_DEPRECATION"
 
     def test_mark_draft_from_draft_raises(self, category: Category) -> None:
         with pytest.raises(ValidationError, match="FUTURE"):
@@ -148,11 +172,17 @@ class TestApprove:
         category.refresh_from_db()
         assert category.status == DataStatus.APPROVED, "approve() must set status to APPROVED"
 
-    def test_approve_from_future_succeeds(self, category: Category) -> None:
-        category.mark_future()
+    def test_approve_from_future_development_succeeds(self, category: Category) -> None:
+        category.mark_future_development()
         category.approve()
         category.refresh_from_db()
-        assert category.status == DataStatus.APPROVED, "approve() must work from FUTURE status"
+        assert category.status == DataStatus.APPROVED, "approve() must work from FUTURE_DEVELOPMENT status"
+
+    def test_approve_from_feature_deprecation_succeeds(self, category: Category) -> None:
+        category.mark_feature_deprecation()
+        category.approve()
+        category.refresh_from_db()
+        assert category.status == DataStatus.APPROVED, "approve() must work from FEATURE_DEPRECATION status"
 
     def test_approve_already_approved_raises(self, category: Category) -> None:
         category.approve()

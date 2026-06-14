@@ -2,14 +2,15 @@
 VersionedModel mixin — inherit this in every model you want versioned.
 
 Status flow:
-    DRAFT <-> FUTURE -> APPROVED  (APPROVED is one-way, CI only)
+    DRAFT <-> FUTURE_DEVELOPMENT -> APPROVED  (APPROVED is one-way, CI only)
+    DRAFT <-> FEATURE_DEPRECATION -> APPROVED  (APPROVED is one-way, CI only)
 
 Active flow:
     active=False → status resets to DRAFT automatically
     active=True  → stays DRAFT, must go through approval again
 
 CI runs against: status=APPROVED + active=True
-Architects edit: status=DRAFT or FUTURE
+Architects edit: status=DRAFT, FUTURE_DEVELOPMENT, or FEATURE_DEPRECATION
 """
 
 from typing import Any
@@ -20,7 +21,8 @@ from django.db import models
 
 class DataStatus(models.TextChoices):
     DRAFT = ("draft", "Draft")
-    FUTURE = ("future", "Future")
+    FUTURE_DEVELOPMENT = ("future_development", "Future development")
+    FEATURE_DEPRECATION = ("feature_deprecation", "Feature deprecation")
     APPROVED = ("approved", "Approved")
 
 
@@ -112,26 +114,37 @@ class VersionedModel(models.Model):
 
     # ── Status transitions ────────────────────────────────────────────────────
 
-    def mark_future(self) -> None:
-        """DRAFT -> FUTURE. Called by architects."""
+    def mark_future_development(self) -> None:
+        """DRAFT -> FUTURE_DEVELOPMENT. Called by architects."""
         if not self.active:
             raise ValidationError("Cannot change status of an inactive row.")
         if self.status != DataStatus.DRAFT:
-            raise ValidationError(f"Can only move to FUTURE from DRAFT. Current status: {self.status}")
-        self.status = DataStatus.FUTURE
+            raise ValidationError(f"Can only move to FUTURE_DEVELOPMENT from DRAFT. Current status: {self.status}")
+        self.status = DataStatus.FUTURE_DEVELOPMENT
+        self.save(update_fields=["status"])
+
+    def mark_feature_deprecation(self) -> None:
+        """DRAFT -> FEATURE_DEPRECATION. Called by architects."""
+        if not self.active:
+            raise ValidationError("Cannot change status of an inactive row.")
+        if self.status != DataStatus.DRAFT:
+            raise ValidationError(f"Can only move to FEATURE_DEPRECATION from DRAFT. Current status: {self.status}")
+        self.status = DataStatus.FEATURE_DEPRECATION
         self.save(update_fields=["status"])
 
     def mark_draft(self) -> None:
-        """FUTURE -> DRAFT. Allows rework."""
+        """FUTURE_DEVELOPMENT or FEATURE_DEPRECATION -> DRAFT. Allows rework."""
         if not self.active:
             raise ValidationError("Cannot change status of an inactive row.")
-        if self.status != DataStatus.FUTURE:
-            raise ValidationError(f"Can only move back to DRAFT from FUTURE. Current status: {self.status}")
+        if self.status not in (DataStatus.FUTURE_DEVELOPMENT, DataStatus.FEATURE_DEPRECATION):
+            raise ValidationError(
+                f"Can only move back to DRAFT from FUTURE_DEVELOPMENT or FEATURE_DEPRECATION. Current status: {self.status}"
+            )
         self.status = DataStatus.DRAFT
         self.save(update_fields=["status"])
 
     def approve(self) -> None:
-        """DRAFT or FUTURE -> APPROVED. One-way. CI only."""
+        """DRAFT, FUTURE_DEVELOPMENT, or FEATURE_DEPRECATION -> APPROVED. One-way. CI only."""
         if not self.active:
             raise ValidationError("Cannot approve an inactive row.")
         if self.status == DataStatus.APPROVED:
