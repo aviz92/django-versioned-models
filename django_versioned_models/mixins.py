@@ -138,7 +138,8 @@ class VersionedModel(models.Model):
             raise ValidationError("Cannot change status of an inactive row.")
         if self.status not in (DataStatus.FUTURE_DEVELOPMENT, DataStatus.FEATURE_DEPRECATION):
             raise ValidationError(
-                f"Can only move back to DRAFT from FUTURE_DEVELOPMENT or FEATURE_DEPRECATION. Current status: {self.status}"
+                f"Can only move back to DRAFT from FUTURE_DEVELOPMENT or FEATURE_DEPRECATION. "
+                f"Current status: {self.status}"
             )
         self.status = DataStatus.DRAFT
         self.save(update_fields=["status"])
