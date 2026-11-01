@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "django-versioned-models"
-version = "1.2.0"
+version = "1.2.1"
 description = "Drop-in versioning for Django models — releases, data status workflow, and CI integration"
 readme = "README.md"
 license = { text = "MIT" }
@@ -26,18 +26,15 @@ dependencies = [
     "django>=5.2",
 ]
 
-[project.optional-dependencies]
-drf = [
-    "djangorestframework>=3.14",
-]
-
 [dependency-groups]
 dev = [
-    "pre-commit>=4.5.1",
-    "pytest>=9.0.2",
-    "pytest-plugins>=2.0.2",
-    "pytest-django",
-    "djangorestframework>=3.14",
+    "custom-python-logger>=4.2.0",
+    "pre-commit>=4.7.0",
+    "pytest>=9.2.0",
+    "pytest-better-report>=1.0.3",
+    "pytest-django>=4.14.0",
+    "python-base-command>=1.0.0",
+    "python-base-toolkit>=1.2.1",
 ]
 
 [project.urls]
