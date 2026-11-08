@@ -53,7 +53,7 @@ class Release(models.Model):
         if self.is_deprecated:
             status = "🗄️️"
         elif self.deployed:
-            status = "🚀"
+            status = "🔒🚀"
         elif self.is_locked:
             status = "🔒"
         else:
