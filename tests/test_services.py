@@ -10,6 +10,7 @@ from django_versioned_models.services import (
     get_versioned_models,
     get_versioned_models_ordered,
     lock_release,
+    rename_release,
 )
 from tests.testapp.models import Category, Product
 
@@ -147,3 +148,53 @@ class TestLockRelease:
     def test_lock_release_already_locked_raises(self, locked_release: Release) -> None:
         with pytest.raises(ValueError, match="already locked"):
             lock_release(locked_release.version)
+
+
+class TestRenameRelease:
+    def test_rename_release_valid_name_updates_version(self, release: Release) -> None:
+        renamed = rename_release(release.version, "v1.0.0-final")
+        release.refresh_from_db()
+        assert release.version == "v1.0.0-final", f"Expected renamed version, got {release.version}"
+        assert renamed.pk == release.pk, "rename must update the same row, not create a new one"
+
+    def test_rename_release_with_rows_keeps_rows_attached(self, release: Release, product: Product) -> None:
+        rename_release(release.version, "v-renamed")
+        product.refresh_from_db()
+        assert product.release.version == "v-renamed", "Rows must follow the renamed release"
+
+    def test_rename_release_locked_release_succeeds(self, locked_release: Release) -> None:
+        rename_release(locked_release.version, "v-locked-renamed")
+        locked_release.refresh_from_db()
+        assert locked_release.version == "v-locked-renamed", "Locked (not deployed) release must be renamable"
+        assert locked_release.is_locked is True, "Rename must not change lock state"
+
+    def test_rename_release_strips_whitespace(self, release: Release) -> None:
+        rename_release(release.version, "  v2  ")
+        release.refresh_from_db()
+        assert release.version == "v2", f"Expected stripped name, got {release.version!r}"
+
+    def test_rename_release_missing_release_raises(self, db: None) -> None:
+        with pytest.raises(ValueError, match="does not exist"):
+            rename_release("ghost", "v9")
+
+    def test_rename_release_deployed_release_raises(self, locked_release: Release) -> None:
+        locked_release.deploy()
+        with pytest.raises(ValueError, match="deployed"):
+            rename_release(locked_release.version, "v-new")
+
+    def test_rename_release_existing_name_raises(self, release: Release, locked_release: Release) -> None:
+        with pytest.raises(ValueError, match="already exists"):
+            rename_release(release.version, locked_release.version)
+
+    def test_rename_release_same_name_raises(self, release: Release) -> None:
+        with pytest.raises(ValueError, match="already named"):
+            rename_release(release.version, release.version)
+
+    @pytest.mark.parametrize("new_version", ["", "   "])
+    def test_rename_release_empty_name_raises(self, release: Release, new_version: str) -> None:
+        with pytest.raises(ValueError, match="must not be empty"):
+            rename_release(release.version, new_version)
+
+    def test_rename_release_too_long_name_raises(self, release: Release) -> None:
+        with pytest.raises(ValueError, match="at most 50 characters"):
+            rename_release(release.version, "v" * 51)
