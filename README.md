@@ -188,6 +188,7 @@ The only operation permitted on a locked release is `approve()` — this is how 
 | `deploy_release --release-version v1.1.0` | Mark as deployed — permanently blocks unlock |
 | `unlock_release --release-version v1.1.0` | Unlock with interactive confirmation (pre-deployment only) |
 | `unlock_release --release-version v1.1.0 --force` | Unlock without prompt — safe for CI/automation (pre-deployment only) |
+| `rename_release --release-version v1.1.0 --new-version v1.1.0-rc` | Rename a release (data untouched; blocked for deployed releases) |
 | `deprecate_release --release-version v1.0.0` | Soft-deprecate (data preserved, hidden by default) |
 | `deprecate_release --release-version v1.0.0 --undo` | Restore a deprecated release |
 

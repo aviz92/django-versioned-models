@@ -39,7 +39,7 @@ class Command(BaseCommand):
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"🚀 Release {version} is now marked as deployed.\n"
+                f"🔒🚀 Release {version} is now marked as deployed.\n"
                 f"   This release can no longer be unlocked.\n"
                 f"   To make changes: python manage.py create_release --release-version <new> --based-on {version}"
             )

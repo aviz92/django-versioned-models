@@ -1,5 +1,5 @@
 """
-Core services — create_release, lock_release, and auto-discovery.
+Core services — create_release, lock_release, rename_release, and auto-discovery.
 """
 
 from django.apps import apps
@@ -141,4 +141,36 @@ def lock_release(version: str) -> Release:
         raise ValueError(f'Release "{version}" is already locked.')
 
     release.lock()
+    return release
+
+
+def rename_release(version: str, new_version: str) -> Release:
+    """
+    Rename a release by changing its version string.
+
+    Versioned rows reference the release by primary key, so no data is touched.
+    Deployed releases cannot be renamed — external systems may already refer to them by name.
+
+    Raises:
+        ValueError: if the new name is empty, too long or taken, the release does not exist, or it is deployed.
+    """
+    if not (new_version := new_version.strip()):
+        raise ValueError("New release version must not be empty.")
+    if len(new_version) > (max_length := Release._meta.get_field("version").max_length):  # pylint: disable=W0212
+        raise ValueError(f"New release version must be at most {max_length} characters.")
+    if new_version == version:
+        raise ValueError(f'Release is already named "{version}".')
+
+    try:
+        release = Release.objects.get(version=version)
+    except Release.DoesNotExist as exc:
+        raise ValueError(f'Release "{version}" does not exist.') from exc
+
+    if release.deployed:
+        raise ValueError(f'Release "{version}" has been deployed and cannot be renamed.')
+    if Release.objects.filter(version=new_version).exists():
+        raise ValueError(f'Release "{new_version}" already exists.')
+
+    release.version = new_version
+    release.save(update_fields=["version"])
     return release

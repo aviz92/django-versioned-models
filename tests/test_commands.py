@@ -199,3 +199,31 @@ class TestApproveReleaseCommand:
     def test_release_not_found_raises(self, db: None) -> None:
         with pytest.raises(CommandError, match="does not exist"):
             call_command("approve_release", release_version="ghost", stdout=StringIO())
+
+
+@pytest.mark.django_db
+class TestRenameReleaseCommand:
+    def test_renames_a_release(self, release: Release) -> None:
+        out = StringIO()
+        call_command("rename_release", release_version=release.version, new_version="v1.0.1", stdout=out)
+        release.refresh_from_db()
+        assert release.version == "v1.0.1", f"Expected v1.0.1, got {release.version}"
+        assert "renamed to v1.0.1" in out.getvalue(), "Success message must mention the new name"
+
+    def test_release_not_found_raises(self, db: None) -> None:
+        with pytest.raises(CommandError, match="does not exist"):
+            call_command("rename_release", release_version="ghost", new_version="v9", stdout=StringIO())
+
+    def test_deployed_release_raises(self, locked_release: Release) -> None:
+        locked_release.deploy()
+        with pytest.raises(CommandError, match="cannot be renamed"):
+            call_command("rename_release", release_version=locked_release.version, new_version="v9", stdout=StringIO())
+
+    def test_existing_name_raises(self, release: Release, locked_release: Release) -> None:
+        with pytest.raises(CommandError, match="already exists"):
+            call_command(
+                "rename_release",
+                release_version=release.version,
+                new_version=locked_release.version,
+                stdout=StringIO(),
+            )

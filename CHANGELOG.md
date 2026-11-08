@@ -7,18 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [release-number] - date
+## [1.3.0] - 2026-11-08
 
 ### Added
-- ...
+- `rename_release` management command and `rename_release()` service — rename a release's version; blocked for deployed releases, validates uniqueness and length.
 
-### Fixed
-- ...
+---
+
+## [1.2.1]
 
 ### Changed
-- ...
+- Dev dependencies refreshed: bumped `pre-commit`, `pytest`, `pytest-django`; added `custom-python-logger`, `pytest-better-report`, `python-base-command`, `python-base-toolkit`; dropped `pytest-plugins` and `djangorestframework`.
 
 ### Removed
-- ...
+- `drf` optional extra (`django-versioned-models[drf]`) — the package does not depend on Django REST Framework.
 
 ---

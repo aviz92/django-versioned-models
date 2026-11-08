@@ -85,11 +85,13 @@ class TestReleaseDeploy:
 
     def test_str_deployed_shows_rocket_icon(self, locked_release: Release) -> None:
         locked_release.deploy()
-        assert "🚀" in str(locked_release), f"Expected rocket icon in '{locked_release}'"
+        assert (
+            str(locked_release) == f"🔒🚀 {locked_release.version}"
+        ), f"Expected lock+rocket icon in '{locked_release}'"
 
     def test_str_deployed_takes_priority_over_locked(self, locked_release: Release) -> None:
         locked_release.deploy()
-        assert "🔒" not in str(locked_release), "Deployed icon must take priority over locked icon"
+        assert not str(locked_release).startswith("🔒 "), "Deployed icon must take priority over plain locked icon"
 
     def test_str_deprecated_takes_priority_over_deployed(self, locked_release: Release) -> None:
         locked_release.deploy()
