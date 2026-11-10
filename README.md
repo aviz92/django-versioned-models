@@ -16,7 +16,7 @@ Drop-in versioning for Django models. Every model that inherits from `VersionedM
 ## 🚀 Features
 
 - **Release management** — every row in every table is tagged to a release. Branch, lock, patch, and deprecate with simple commands.
-- **Data status workflow** — `DRAFT → FUTURE → APPROVED`. CI only sees approved rows. Live architect edits never break tests.
+- **Data status workflow** — `DRAFT → FUTURE_DEVELOPMENT / FUTURE_DEPRECATION → APPROVED`. CI only sees approved rows. Live architect edits never break tests.
 - **Lock enforcement** — locked releases are fully immutable at the model level. No edits, no deletes — from Admin, API, or shell.
 - **Soft-delete** — rows can be deactivated without deletion. Deactivating an approved row resets it to `DRAFT` so it must be re-approved before CI sees it again.
 - **Auto-discovery** — inherit `VersionedModel` and your model is versioned. No registration needed.
@@ -109,7 +109,7 @@ python manage.py unlock_release --release-version v1.1.0 --force  # CI / automat
 # Lock before CI runs — no more edits after this point
 python manage.py lock_release --release-version v1.1.0
 
-# CI approves all stable DRAFT rows (FUTURE rows are left untouched)
+# CI approves all stable DRAFT rows (FUTURE_DEVELOPMENT / FUTURE_DEPRECATION rows are left untouched)
 python manage.py approve_release --release-version v1.1.0
 
 # Run tests against approved data only
@@ -132,7 +132,7 @@ Every model that inherits from `VersionedModel` automatically gets:
 | Field | Type | Description |
 |-------|------|-------------|
 | `release` | FK → `Release` | Which release this row belongs to |
-| `status` | CharField | Data readiness: `draft` / `future` / `approved` |
+| `status` | CharField | Data readiness: `draft` / `future_development` / `future_deprecation` / `approved` |
 | `active` | BooleanField | Soft-delete flag. Inactive rows are invisible to `for_release()` and `approved()` |
 
 **`Release` state fields:**
@@ -146,13 +146,15 @@ Every model that inherits from `VersionedModel` automatically gets:
 ### Status Flow
 
 ```
-DRAFT <-> FUTURE -> APPROVED   (APPROVED is one-way — CI only)
+DRAFT <-> FUTURE_DEVELOPMENT -> APPROVED   (APPROVED is one-way — CI only)
+DRAFT <-> FUTURE_DEPRECATION -> APPROVED   (APPROVED is one-way — CI only)
 ```
 
 | Status | Set by | Meaning |
 |--------|--------|---------|
 | `DRAFT` | Architects | Being worked on |
-| `FUTURE` | Architects | Planned but not ready |
+| `FUTURE_DEVELOPMENT` | Architects | Planned addition — not ready yet (`mark_future_development()`) |
+| `FUTURE_DEPRECATION` | Architects | Planned removal — not ready yet (`mark_future_deprecation()`) |
 | `APPROVED` | CI only | Stable — what tests run against |
 
 ### Active / Inactive (Soft-Delete)
@@ -184,7 +186,7 @@ The only operation permitted on a locked release is `approve()` — this is how 
 | `create_release --release-version v1.0.0` | Create a standalone release (unlocked) |
 | `create_release --release-version v1.1.0 --based-on v1.0.0` | Branch from a locked release — copies all rows |
 | `lock_release --release-version v1.1.0` | Lock a release (immutable) |
-| `approve_release --release-version v1.1.0` | Approve all active DRAFT rows (CI only — FUTURE and inactive untouched) |
+| `approve_release --release-version v1.1.0` | Approve all active DRAFT rows (CI only — FUTURE_DEVELOPMENT, FUTURE_DEPRECATION, and inactive untouched) |
 | `deploy_release --release-version v1.1.0` | Mark as deployed — permanently blocks unlock |
 | `unlock_release --release-version v1.1.0` | Unlock with interactive confirmation (pre-deployment only) |
 | `unlock_release --release-version v1.1.0 --force` | Unlock without prompt — safe for CI/automation (pre-deployment only) |
@@ -211,7 +213,7 @@ Product.objects.approved(release)
 Product.objects.all_rows(release)
 
 # Filter by status directly
-Product.objects.for_release(release).filter(status="future")
+Product.objects.for_release(release).filter(status=DataStatus.FUTURE_DEPRECATION)
 ```
 
 ---

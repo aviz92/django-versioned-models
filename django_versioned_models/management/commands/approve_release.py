@@ -2,7 +2,7 @@
 Management command: approve_release
 
 Called by CI to approve all DRAFT rows in a release.
-FUTURE_DEVELOPMENT and FEATURE_DEPRECATION rows are left untouched — they are not ready yet.
+FUTURE_DEVELOPMENT and FUTURE_DEPRECATION rows are left untouched — they are not ready yet.
 Inactive rows are skipped — they must be reactivated first.
 
 Usage:
@@ -21,7 +21,7 @@ from django_versioned_models.services import get_versioned_models
 class Command(BaseCommand):
     help = (
         "Approve all DRAFT rows in a release (CI only). "
-        "FUTURE_DEVELOPMENT, FEATURE_DEPRECATION, and inactive rows are untouched."
+        "FUTURE_DEVELOPMENT, FUTURE_DEPRECATION, and inactive rows are untouched."
     )
 
     def add_arguments(self, parser: CommandParser) -> None:
@@ -48,6 +48,6 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f"\n✅ {total} DRAFT rows approved in release {version}.\n"
-                f"   FUTURE_DEVELOPMENT, FEATURE_DEPRECATION, and inactive rows were left untouched."
+                f"   FUTURE_DEVELOPMENT, FUTURE_DEPRECATION, and inactive rows were left untouched."
             )
         )
