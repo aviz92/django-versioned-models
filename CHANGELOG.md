@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.0.0] - 2026-11-10
+
+### Changed
+- **Breaking:** renamed `DataStatus.FEATURE_DEPRECATION` to `DataStatus.FUTURE_DEPRECATION`. Stored value changed from `"feature_deprecation"` to `"future_deprecation"` and label to `"Future deprecation"`.
+- **Breaking:** renamed `VersionedModel.mark_feature_deprecation()` to `mark_future_deprecation()`.
+
+### Migration
+Run `makemigrations` for your versioned models, then migrate existing rows:
+```python
+MyModel.objects.filter(status="feature_deprecation").update(status="future_deprecation")
+```
+
+---
+
 ## [1.3.0] - 2026-11-08
 
 ### Added

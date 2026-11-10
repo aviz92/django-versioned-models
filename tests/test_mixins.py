@@ -127,22 +127,22 @@ class TestMarkFutureDevelopment:
 
 @pytest.mark.django_db
 class TestMarkFeatureDeprecation:
-    def test_mark_feature_deprecation_from_draft_succeeds(self, category: Category) -> None:
-        category.mark_feature_deprecation()
+    def test_mark_future_deprecation_from_draft_succeeds(self, category: Category) -> None:
+        category.mark_future_deprecation()
         category.refresh_from_db()
         assert (
-            category.status == DataStatus.FEATURE_DEPRECATION
-        ), "mark_feature_deprecation() must set status to FEATURE_DEPRECATION"
+            category.status == DataStatus.FUTURE_DEPRECATION
+        ), "mark_future_deprecation() must set status to FUTURE_DEPRECATION"
 
-    def test_mark_feature_deprecation_from_approved_raises(self, category: Category) -> None:
+    def test_mark_future_deprecation_from_approved_raises(self, category: Category) -> None:
         category.approve()
         with pytest.raises(ValidationError, match="DRAFT"):
-            category.mark_feature_deprecation()
+            category.mark_future_deprecation()
 
-    def test_mark_feature_deprecation_when_inactive_raises(self, category: Category) -> None:
+    def test_mark_future_deprecation_when_inactive_raises(self, category: Category) -> None:
         category.deactivate()
         with pytest.raises(ValidationError, match="inactive"):
-            category.mark_feature_deprecation()
+            category.mark_future_deprecation()
 
 
 @pytest.mark.django_db
@@ -153,13 +153,11 @@ class TestMarkDraft:
         category.refresh_from_db()
         assert category.status == DataStatus.DRAFT, "mark_draft() must set status back to DRAFT from FUTURE_DEVELOPMENT"
 
-    def test_mark_draft_from_feature_deprecation_succeeds(self, category: Category) -> None:
-        category.mark_feature_deprecation()
+    def test_mark_draft_from_future_deprecation_succeeds(self, category: Category) -> None:
+        category.mark_future_deprecation()
         category.mark_draft()
         category.refresh_from_db()
-        assert (
-            category.status == DataStatus.DRAFT
-        ), "mark_draft() must set status back to DRAFT from FEATURE_DEPRECATION"
+        assert category.status == DataStatus.DRAFT, "mark_draft() must set status back to DRAFT from FUTURE_DEPRECATION"
 
     def test_mark_draft_from_draft_raises(self, category: Category) -> None:
         with pytest.raises(ValidationError, match="FUTURE"):
@@ -184,11 +182,11 @@ class TestApprove:
         category.refresh_from_db()
         assert category.status == DataStatus.APPROVED, "approve() must work from FUTURE_DEVELOPMENT status"
 
-    def test_approve_from_feature_deprecation_succeeds(self, category: Category) -> None:
-        category.mark_feature_deprecation()
+    def test_approve_from_future_deprecation_succeeds(self, category: Category) -> None:
+        category.mark_future_deprecation()
         category.approve()
         category.refresh_from_db()
-        assert category.status == DataStatus.APPROVED, "approve() must work from FEATURE_DEPRECATION status"
+        assert category.status == DataStatus.APPROVED, "approve() must work from FUTURE_DEPRECATION status"
 
     def test_approve_already_approved_raises(self, category: Category) -> None:
         category.approve()
