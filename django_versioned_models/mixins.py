@@ -11,12 +11,104 @@ Active flow:
 
 CI runs against: status=APPROVED + active=True
 Architects edit: status=DRAFT, FUTURE_DEVELOPMENT, or FUTURE_DEPRECATION
+
+Lock flow:
+    approve_release -> lock_release -> deploy_release
+    Rows in a locked or deployed release are fully immutable — no save, delete,
+    approve, or QuerySet update/delete/bulk_create/bulk_update.
 """
 
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Q
+
+_FROZEN_RELEASE_Q = Q(release__is_locked=True) | Q(release__deployed=True)
+
+
+def _raise_if_releases_locked(release_ids: Iterable[int | None], action: str) -> None:
+    """
+    Raise ValidationError if any of the given releases is locked or deployed.
+
+    Always reads lock state from the DB — a cached Release instance may be stale.
+    """
+    from django_versioned_models.models import Release  # pylint: disable=C0415
+
+    if not (ids := {pk for pk in release_ids if pk is not None}):
+        return
+    locked = sorted(
+        Release.objects.filter(pk__in=ids)
+        .filter(Q(is_locked=True) | Q(deployed=True))
+        .values_list("version", flat=True)
+    )
+    if locked:
+        raise ValidationError(
+            f"Release {', '.join(locked)} is locked and cannot be modified ({action}). "
+            "Create a new release (patch) instead."
+        )
+
+
+def _release_id_from_kwargs(kwargs: dict[str, Any]) -> int | None:
+    """Extract a target release id from QuerySet.update() kwargs, if one is being set."""
+    if "release_id" in kwargs:
+        return kwargs["release_id"]
+    release = kwargs.get("release")
+    return getattr(release, "pk", release)
+
+
+class VersionedQuerySet(models.QuerySet):
+    """QuerySet that refuses bulk writes touching rows of a locked or deployed release."""
+
+    def for_release(self, release: models.Model) -> "VersionedQuerySet":
+        """
+        Active rows for a release, all statuses.
+        Use this for architect-facing GUI views — shows exactly what's alive in this release.
+        """
+        return self.filter(release=release, active=True)
+
+    def approved(self, release: models.Model) -> "VersionedQuerySet":
+        """Only approved + active rows — what CI runs against."""
+        return self.filter(release=release, status=DataStatus.APPROVED, active=True)
+
+    def all_rows(self, release: models.Model) -> "VersionedQuerySet":
+        """
+        All rows including inactive — for copying between releases and admin/audit use.
+        Do not use for business logic.
+        """
+        return self.filter(release=release)
+
+    def _raise_if_touches_locked_release(self, action: str) -> None:
+        if self.filter(_FROZEN_RELEASE_Q).exists():
+            raise ValidationError(
+                f"QuerySet {action} touches rows of a locked release. Create a new release (patch) instead."
+            )
+
+    def update(self, **kwargs: Any) -> int:
+        self._raise_if_touches_locked_release("update")
+        _raise_if_releases_locked([_release_id_from_kwargs(kwargs)], "update")
+        return super().update(**kwargs)
+
+    def delete(self) -> tuple[int, dict[str, int]]:
+        self._raise_if_touches_locked_release("delete")
+        return super().delete()
+
+    def bulk_create(self, objs: Iterable[models.Model], *args: Any, **kwargs: Any) -> list[models.Model]:
+        objs = list(objs)
+        _raise_if_releases_locked((obj.release_id for obj in objs), "bulk_create")
+        return super().bulk_create(objs, *args, **kwargs)
+
+    def bulk_update(self, objs: Iterable[models.Model], fields: Sequence[str], *args: Any, **kwargs: Any) -> int:
+        objs = list(objs)
+        # Check stored release (rows can't leave a locked release) and target release (can't enter one).
+        stored = self.model._base_manager.filter(pk__in=[obj.pk for obj in objs])  # pylint: disable=W0212
+        if stored.filter(_FROZEN_RELEASE_Q).exists():
+            raise ValidationError(
+                "QuerySet bulk_update touches rows of a locked release. Create a new release (patch) instead."
+            )
+        _raise_if_releases_locked((obj.release_id for obj in objs), "bulk_update")
+        return super().bulk_update(objs, fields, *args, **kwargs)
 
 
 class DataStatus(models.TextChoices):
@@ -61,29 +153,8 @@ class VersionedModel(models.Model):
         ),
     )
 
-    class VersionedManager(models.Manager):
-
-        def for_release(self, release: models.Model) -> models.QuerySet:
-            """
-            Active rows for a release, all statuses.
-            Use this for architect-facing GUI views — shows exactly what's alive in this release.
-            """
-            return self.get_queryset().filter(release=release, active=True)
-
-        def approved(self, release: models.Model) -> models.QuerySet:
-            """Only approved + active rows — what CI runs against."""
-            return self.get_queryset().filter(
-                release=release,
-                status=DataStatus.APPROVED,
-                active=True,
-            )
-
-        def all_rows(self, release: models.Model) -> models.QuerySet:
-            """
-            All rows including inactive — for copying between releases and admin/audit use.
-            Do not use for business logic.
-            """
-            return self.get_queryset().filter(release=release)
+    class VersionedManager(models.Manager.from_queryset(VersionedQuerySet)):  # type: ignore[misc]
+        """Exposes for_release / approved / all_rows and the lock-guarded bulk operations."""
 
     objects = VersionedManager()
 
@@ -155,32 +226,24 @@ class VersionedModel(models.Model):
 
     # ── Lock enforcement ──────────────────────────────────────────────────────
 
-    def _is_release_locked(self) -> bool:
-        # Use Django's FK instance cache when available (e.g. after select_related or
-        # direct assignment). Falls back to a single-column DB query to avoid SELECT *.
-        # Django stores FK instances via field.set_cached_value — must use get_cached_value,
-        # not __dict__["release"], because the cache key is "_release_cache", not "release".
-        release_field = self.__class__._meta.get_field("release")  # pylint: disable=W0212
-        try:
-            cached = release_field.get_cached_value(self)
-            return cached.is_locked
-        except KeyError:
-            pass
-        from django_versioned_models.models import Release  # pylint: disable=C0415
-
-        return Release.objects.filter(pk=self.release_id).values_list("is_locked", flat=True).first() or False
+    def _affected_release_ids(self) -> set[int | None]:
+        """
+        Releases a write to this row touches: the target release and, for an existing row,
+        the release it is currently stored under (so rows can't be moved out of a locked release).
+        """
+        release_ids = {self.release_id}
+        if not self._state.adding:
+            # pylint: disable=W0212
+            release_ids.add(type(self)._base_manager.filter(pk=self.pk).values_list("release_id", flat=True).first())
+        return release_ids
 
     def save(self, *args: Any, **kwargs: Any) -> None:
-        if self._is_release_locked() and self.status != DataStatus.APPROVED:
-            raise ValidationError(
-                f"Release {self.release_id} is locked and cannot be modified. " f"Create a new release (patch) instead."
-            )
+        _raise_if_releases_locked(self._affected_release_ids(), "save")
         super().save(*args, **kwargs)
 
-    def delete(self, *args: Any, **kwargs: Any) -> None:
-        if self._is_release_locked():
-            raise ValidationError(f"Release {self.release_id} is locked. Cannot delete rows.")
-        super().delete(*args, **kwargs)
+    def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
+        _raise_if_releases_locked(self._affected_release_ids(), "delete")
+        return super().delete(*args, **kwargs)
 
     class Meta:
         abstract = True

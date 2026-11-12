@@ -2,6 +2,7 @@
 Management command: approve_release
 
 Called by CI to approve all DRAFT rows in a release.
+Must run BEFORE lock_release — locked and deployed releases are immutable.
 FUTURE_DEVELOPMENT and FUTURE_DEPRECATION rows are left untouched — they are not ready yet.
 Inactive rows are skipped — they must be reactivated first.
 
@@ -34,6 +35,12 @@ class Command(BaseCommand):
             release = Release.objects.get(version=version)
         except Release.DoesNotExist as exc:
             raise CommandError(f'Release "{version}" does not exist.') from exc
+
+        if release.is_locked or release.deployed:
+            raise CommandError(
+                f'Release "{version}" is locked — approve rows before locking. '
+                f"Flow: approve_release -> lock_release -> deploy_release."
+            )
 
         total = 0
         for model in get_versioned_models():

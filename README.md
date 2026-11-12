@@ -17,7 +17,7 @@ Drop-in versioning for Django models. Every model that inherits from `VersionedM
 
 - **Release management** — every row in every table is tagged to a release. Branch, lock, patch, and deprecate with simple commands.
 - **Data status workflow** — `DRAFT → FUTURE_DEVELOPMENT / FUTURE_DEPRECATION → APPROVED`. CI only sees approved rows. Live architect edits never break tests.
-- **Lock enforcement** — locked releases are fully immutable at the model level. No edits, no deletes — from Admin, API, or shell.
+- **Lock enforcement** — locked and deployed releases are fully immutable at the model and QuerySet level. No edits, inserts, approvals, or deletes — from Admin, API, shell, or bulk operations.
 - **Soft-delete** — rows can be deactivated without deletion. Deactivating an approved row resets it to `DRAFT` so it must be re-approved before CI sees it again.
 - **Auto-discovery** — inherit `VersionedModel` and your model is versioned. No registration needed.
 - **Topological FK sort** — models are duplicated in the correct dependency order automatically when branching a release.
@@ -93,7 +93,7 @@ python manage.py lock_release --release-version v1.0.0
 ## 🔄 Ongoing Workflow
 
 ```
-create_release → architects edit (DRAFT) → lock_release → CI approves → lock_release → deploy_release → ship
+create_release → architects edit (DRAFT) → approve_release → lock_release → deploy_release → ship
 ```
 
 ```bash
@@ -106,17 +106,15 @@ python manage.py create_release --release-version v1.1.0 --based-on v1.0.0
 python manage.py unlock_release --release-version v1.1.0          # interactive
 python manage.py unlock_release --release-version v1.1.0 --force  # CI / automation
 
-# Lock before CI runs — no more edits after this point
-python manage.py lock_release --release-version v1.1.0
-
 # CI approves all stable DRAFT rows (FUTURE_DEVELOPMENT / FUTURE_DEPRECATION rows are left untouched)
+# Must run before lock_release — locked releases reject approval
 python manage.py approve_release --release-version v1.1.0
 
 # Run tests against approved data only
 pytest
 
-# Lock again if unlocked for corrections, then deploy
-python manage.py lock_release --release-version v1.1.0   # skip if already locked
+# Lock — no more edits (including approvals) after this point, then deploy
+python manage.py lock_release --release-version v1.1.0
 python manage.py deploy_release --release-version v1.1.0  # requires locked — permanently blocks unlock
 
 # Bug found after deployment? Create a patch — never unlock a deployed release
@@ -168,14 +166,20 @@ Deactivating an approved row resets its status to `DRAFT`, so it must go through
 
 ### Lock Enforcement
 
-Locked releases are immutable. Any `save()` or `delete()` on a non-approved row raises `ValidationError` — from Admin, API, or shell:
+Locked and deployed releases are immutable. Every write raises `ValidationError` — whatever the row's status, from Admin, API, or shell:
 
 ```python
-row.save()    # raises ValidationError if release is locked and status != APPROVED
-row.delete()  # raises ValidationError if release is locked
+row.save()     # edit or insert — raises if the row's current or target release is locked
+row.delete()   # raises if release is locked
+row.approve()  # raises — approve before locking
+
+Product.objects.filter(release=locked).update(...)  # raises
+Product.objects.filter(release=locked).delete()     # raises
+Product.objects.bulk_create([...])                  # raises if any row targets a locked release
+Product.objects.bulk_update([...], fields)          # raises if any row is in / moves to a locked release
 ```
 
-The only operation permitted on a locked release is `approve()` — this is how CI stamps rows after locking.
+Lock state is always read from the database, so a stale `Release` instance can't bypass the check. Need a correction before deployment? `unlock_release`, fix, re-approve, lock again. After deployment, create a patch release.
 
 ---
 
