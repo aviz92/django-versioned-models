@@ -200,6 +200,25 @@ class TestApproveReleaseCommand:
         with pytest.raises(CommandError, match="does not exist"):
             call_command("approve_release", release_version="ghost", stdout=StringIO())
 
+    @pytest.mark.parametrize("deploy", [False, True], ids=["locked", "deployed"])
+    def test_locked_release_raises_and_leaves_rows_untouched(
+        self, release: Release, category: Category, deploy: bool
+    ) -> None:
+        release.lock()
+        if deploy:
+            release.deploy()
+        with pytest.raises(CommandError, match="approve rows before locking"):
+            call_command("approve_release", release_version=release.version, stdout=StringIO())
+        cat = Category.objects.get(pk=category.pk)
+        assert cat.status == DataStatus.DRAFT, "Rows of a locked release must stay untouched"
+
+    def test_approve_then_lock_then_deploy_flow(self, release: Release, category: Category) -> None:
+        call_command("approve_release", release_version=release.version, stdout=StringIO())
+        call_command("lock_release", release_version=release.version, stdout=StringIO())
+        call_command("deploy_release", release_version=release.version, stdout=StringIO())
+        category.refresh_from_db()
+        assert category.status == DataStatus.APPROVED, "Rows approved before lock must stay APPROVED after deploy"
+
 
 @pytest.mark.django_db
 class TestRenameReleaseCommand:

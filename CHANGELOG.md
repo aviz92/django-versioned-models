@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.0.0] - 2026-11-12
+
+### Changed
+- **Breaking:** locked and deployed releases are now fully immutable. Previously, rows with `status=APPROVED` could still be edited, and new APPROVED rows could be inserted into a locked release.
+- **Breaking:** `approve()` and `approve_release` now refuse locked or deployed releases. The CI flow is `approve_release -> lock_release -> deploy_release`.
+- **Breaking:** `QuerySet.update()`, `QuerySet.delete()`, `bulk_create()` and `bulk_update()` on versioned models raise `ValidationError` when they touch a locked or deployed release.
+- Lock state is always read from the database — a stale cached `Release` instance no longer bypasses the lock.
+
+### Fixed
+- Rows can no longer be moved out of (or into) a locked release by reassigning `release`.
+
+### Added
+- `VersionedQuerySet` — `for_release()`, `approved()` and `all_rows()` are now chainable QuerySet methods.
+
+---
+
 ## [2.0.0] - 2026-11-10
 
 ### Changed
