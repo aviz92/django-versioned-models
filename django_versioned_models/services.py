@@ -1,10 +1,10 @@
 """
-Core services — create_release, lock_release, rename_release, and auto-discovery.
+Core services — create_release, lock_release, rename_release, delete_release, and auto-discovery.
 """
 
 from django.apps import apps
 from django.db import transaction
-from django.db.models import Model
+from django.db.models import Model, ProtectedError, RestrictedError
 
 from django_versioned_models.mixins import VersionedModel
 from django_versioned_models.models import Release
@@ -174,3 +174,85 @@ def rename_release(version: str, new_version: str) -> Release:
     release.version = new_version
     release.save(update_fields=["version"])
     return release
+
+
+def _get_deletable_release(version: str, for_update: bool = False) -> Release:
+    """Fetch a release and make sure it may be deleted: it exists and is not deployed."""
+    queryset = Release.objects.select_for_update() if for_update else Release.objects.all()
+    try:
+        release = queryset.get(version=version)
+    except Release.DoesNotExist as exc:
+        raise ValueError(f'Release "{version}" does not exist.') from exc
+
+    if release.deployed:
+        raise ValueError(f'Release "{version}" has been deployed and cannot be deleted.')
+    return release
+
+
+def get_child_release_versions(version: str) -> list[str]:
+    """Versions of the releases branched directly from the given release (their based_on points at it)."""
+    return sorted(Release.objects.filter(based_on__version=version).values_list("version", flat=True))
+
+
+def count_release_rows(release: Release) -> dict[str, int]:
+    """
+    Number of versioned rows (active and inactive) stored under a release, per model label.
+    Models with no rows in the release are omitted.
+    """
+    counts = {}
+    for model in get_versioned_models_ordered():
+        # pylint: disable=W0212
+        if count := model._base_manager.filter(release=release).count():
+            counts[model._meta.label] = count
+    return counts
+
+
+def delete_release(version: str, dry_run: bool = False) -> dict[str, int]:
+    """
+    Delete a release together with every versioned row that belongs to it.
+
+    Allowed for draft and locked releases; refused for deployed releases. Releases branched from
+    this one are kept, but their based_on is cleared (SET_NULL). Rows are deleted children-first (reverse FK order)
+    so PROTECT relations between versioned models in the same release don't block the delete.
+    The row-level lock guards are bypassed on purpose — removing a non-deployed release, locked
+    or not, is the point of this operation.
+
+    Args:
+        version: Version string of the release to delete.
+        dry_run: Validate and report what would be deleted, without deleting anything.
+
+    Returns:
+        Deleted (or, with dry_run, to-be-deleted) object counts per model label, including the
+        release itself. A real delete also counts non-versioned objects removed by CASCADE.
+
+    Raises:
+        ValueError: if the release does not exist, is deployed, or other data PROTECTs / RESTRICTs its rows.
+    """
+    if dry_run:
+        release = _get_deletable_release(version)
+        return {**count_release_rows(release), Release._meta.label: 1}  # pylint: disable=W0212
+    return _delete_release(version)
+
+
+@transaction.atomic
+def _delete_release(version: str) -> dict[str, int]:
+    release = _get_deletable_release(version, for_update=True)
+    deleted: dict[str, int] = {}
+    try:
+        for model in reversed(get_versioned_models_ordered()):
+            # _base_manager is a plain Manager — skips VersionedQuerySet's lock guard.
+            _, per_model = model._base_manager.filter(release=release).delete()  # pylint: disable=W0212
+            _merge_counts(deleted, per_model)
+        _, per_model = release.delete()
+        _merge_counts(deleted, per_model)
+    except (ProtectedError, RestrictedError) as exc:
+        blockers = sorted({obj._meta.label for obj in exc.args[1]})  # pylint: disable=W0212
+        raise ValueError(
+            f'Release "{version}" cannot be deleted: its rows are still referenced by {", ".join(blockers)}.'
+        ) from exc
+    return {label: count for label, count in deleted.items() if count}
+
+
+def _merge_counts(total: dict[str, int], counts: dict[str, int]) -> None:
+    for label, count in counts.items():
+        total[label] = total.get(label, 0) + count

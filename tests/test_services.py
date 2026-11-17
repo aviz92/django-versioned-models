@@ -6,13 +6,16 @@ from django.contrib.auth import get_user_model
 from django_versioned_models.mixins import DataStatus, VersionedModel
 from django_versioned_models.models import Release
 from django_versioned_models.services import (
+    count_release_rows,
     create_release,
+    delete_release,
+    get_child_release_versions,
     get_versioned_models,
     get_versioned_models_ordered,
     lock_release,
     rename_release,
 )
-from tests.testapp.models import Category, Product
+from tests.testapp.models import Category, CategoryNote, Product
 
 
 @pytest.mark.django_db
@@ -198,3 +201,85 @@ class TestRenameRelease:
     def test_rename_release_too_long_name_raises(self, release: Release) -> None:
         with pytest.raises(ValueError, match="at most 50 characters"):
             rename_release(release.version, "v" * 51)
+
+
+@pytest.mark.django_db
+class TestDeleteRelease:
+    def test_delete_release_draft_release_removes_release_and_rows(self, release: Release, product: Product) -> None:
+        deleted = delete_release(release.version)
+        assert not Release.objects.filter(version=release.version).exists(), "Release must be deleted"
+        assert Category.objects.filter(release_id=release.pk).count() == 0, "Category rows must be deleted"
+        assert Product.objects.filter(release_id=release.pk).count() == 0, "Product rows must be deleted"
+        assert deleted == {
+            "testapp.Product": 1,
+            "testapp.Category": 1,
+            "django_versioned_models.Release": 1,
+        }, f"Unexpected deletion counts: {deleted}"
+
+    def test_delete_release_locked_release_removes_all_rows(self, locked_release_with_data: Release) -> None:
+        release_pk = locked_release_with_data.pk
+        deleted = delete_release(locked_release_with_data.version)
+        assert not Release.objects.filter(pk=release_pk).exists(), "Locked release must be deletable"
+        assert Category.objects.filter(release_id=release_pk).count() == 0, "Inactive rows must be deleted too"
+        assert deleted["testapp.Category"] == 2, f"Expected 2 categories deleted, got {deleted}"
+        assert deleted["testapp.Product"] == 2, f"Expected 2 products deleted, got {deleted}"
+
+    def test_delete_release_leaves_other_releases_untouched(self, release: Release, category: Category) -> None:
+        other = Release.objects.create(version="v-other")
+        Category.objects.create(name="Keep me", release=other)
+        delete_release(release.version)
+        assert Category.objects.all_rows(other).count() == 1, "Rows of other releases must survive"
+
+    def test_delete_release_dry_run_deletes_nothing(self, release: Release, product: Product) -> None:
+        planned = delete_release(release.version, dry_run=True)
+        assert Release.objects.filter(pk=release.pk).exists(), "Dry run must not delete the release"
+        assert Product.objects.filter(pk=product.pk).exists(), "Dry run must not delete rows"
+        assert planned == {
+            "testapp.Category": 1,
+            "testapp.Product": 1,
+            "django_versioned_models.Release": 1,
+        }, f"Unexpected dry-run counts: {planned}"
+
+    def test_delete_release_missing_release_raises(self, db: None) -> None:
+        with pytest.raises(ValueError, match="does not exist"):
+            delete_release("ghost")
+
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["real", "dry_run"])
+    def test_delete_release_deployed_release_raises(self, locked_release_with_data: Release, dry_run: bool) -> None:
+        locked_release_with_data.deploy()
+        with pytest.raises(ValueError, match="deployed and cannot be deleted"):
+            delete_release(locked_release_with_data.version, dry_run=dry_run)
+        assert Release.objects.filter(pk=locked_release_with_data.pk).exists(), "Deployed release must survive"
+        assert Category.objects.all_rows(locked_release_with_data).count() == 2, "Deployed rows must survive"
+
+    def test_delete_release_with_child_release_keeps_child_and_clears_based_on(
+        self, locked_release_with_data: Release
+    ) -> None:
+        child = create_release("v3.0.0", based_on_version=locked_release_with_data.version)
+        delete_release(locked_release_with_data.version)
+        child.refresh_from_db()
+        assert child.based_on is None, "Child release must lose its based_on link"
+        assert Category.objects.all_rows(child).count() == 2, "Child release rows must survive"
+
+    def test_get_child_release_versions_lists_direct_branches(self, locked_release_with_data: Release) -> None:
+        create_release("v3.1.0", based_on_version=locked_release_with_data.version)
+        create_release("v3.0.0", based_on_version=locked_release_with_data.version)
+        children = get_child_release_versions(locked_release_with_data.version)
+        assert children == ["v3.0.0", "v3.1.0"], f"Unexpected children: {children}"
+
+    def test_delete_release_protected_rows_raises_and_rolls_back(self, release: Release, product: Product) -> None:
+        CategoryNote.objects.create(category=product.category, text="pinned")
+        with pytest.raises(ValueError, match="still referenced by testapp.CategoryNote"):
+            delete_release(release.version)
+        assert Release.objects.filter(pk=release.pk).exists(), "Release must survive a blocked delete"
+        assert Product.objects.filter(pk=product.pk).exists(), "Rows deleted before the block must be rolled back"
+
+
+@pytest.mark.django_db
+class TestCountReleaseRows:
+    def test_count_release_rows_includes_inactive_rows(self, locked_release_with_data: Release) -> None:
+        counts = count_release_rows(locked_release_with_data)
+        assert counts == {"testapp.Category": 2, "testapp.Product": 2}, f"Unexpected counts: {counts}"
+
+    def test_count_release_rows_empty_release_is_empty(self, release: Release) -> None:
+        assert not count_release_rows(release), "A release with no rows must report no counts"
