@@ -181,6 +181,16 @@ Product.objects.bulk_update([...], fields)          # raises if any row is in / 
 
 Lock state is always read from the database, so a stale `Release` instance can't bypass the check. Need a correction before deployment? `unlock_release`, fix, re-approve, lock again. After deployment, create a patch release.
 
+The same holds for deletes that cascade from other models. Deleting an object that locked rows point to raises if the delete would remove them (`CASCADE`) or rewrite them (`SET_NULL`, `SET_DEFAULT`, `SET()`), and the whole delete is rolled back:
+
+```python
+supplier.delete()                    # raises if a locked Part has supplier=FK(..., on_delete=CASCADE)
+Supplier.objects.filter(...).delete()  # same
+locked_release.delete()              # raises if the release still has rows — use delete_release
+```
+
+Like an integrity error, this is raised inside the delete's transaction — inside an outer `atomic()` block, exit it (or wrap the delete in a nested `atomic()`) before running more queries.
+
 The one deliberate exception is `delete_release`: it removes a non-deployed release (locked or not) together with all its rows.
 
 #### Deployed releases

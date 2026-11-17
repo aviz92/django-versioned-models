@@ -15,15 +15,20 @@ Architects edit: status=DRAFT, FUTURE_DEVELOPMENT, or FUTURE_DEPRECATION
 Lock flow:
     approve_release -> lock_release -> deploy_release
     Rows in a locked or deployed release are fully immutable — no save, delete,
-    approve, or QuerySet update/delete/bulk_create/bulk_update.
+    approve, or QuerySet update/delete/bulk_create/bulk_update. Deleting an object
+    that locked rows point to is refused too when the delete would cascade into them
+    (CASCADE removes them; SET_NULL / SET_DEFAULT / SET() rewrites them).
 """
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any
 
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.db.models.signals import pre_delete
 
 _FROZEN_RELEASE_Q = Q(release__is_locked=True) | Q(release__deployed=True)
 
@@ -253,3 +258,68 @@ class VersionedModel(models.Model):
                 name="%(app_label)s_%(class)s_rel_sta_act_idx",
             ),
         ]
+
+
+# ── Cascade guard ─────────────────────────────────────────────────────────────
+#
+# Django's delete collector removes (CASCADE) or rewrites (SET_NULL, SET_DEFAULT, SET())
+# related rows with plain queries — it never calls VersionedModel.delete()/save() or the
+# guarded QuerySet. So deleting an object that locked rows point to would silently change a
+# locked release. A pre_delete receiver on every model that versioned rows point to closes
+# that hole: it runs for each object the collector is about to delete, before anything is
+# written, and an exception rolls the whole delete back. Like a DB integrity error, it is raised
+# inside the delete's transaction: inside an outer atomic() block, that block must be exited
+# (or wrapped in a nested atomic()) before running further queries.
+
+_NO_CASCADE_EFFECT = (models.DO_NOTHING, models.PROTECT, models.RESTRICT)
+_release_being_deleted: ContextVar[int | None] = ContextVar("release_being_deleted", default=None)
+
+
+@contextmanager
+def allow_release_deletion(release_id: int) -> Iterator[None]:
+    """
+    Let the cascade guard ignore rows of one release while that release is being deleted.
+    Used by services.delete_release() — the one deliberate way to remove locked rows.
+    """
+    token = _release_being_deleted.set(release_id)
+    try:
+        yield
+    finally:
+        _release_being_deleted.reset(token)
+
+
+def _cascading_fields(model: type[models.Model]) -> Iterator[models.ForeignKey]:
+    """Forward FK / one-to-one fields of a versioned model whose on_delete changes this model's rows."""
+    for field in model._meta.get_fields():  # pylint: disable=W0212
+        if field.many_to_one or field.one_to_one:
+            if field.concrete and field.remote_field.on_delete not in _NO_CASCADE_EFFECT:
+                yield field
+
+
+def _make_cascade_guard(model: type[models.Model], field: models.ForeignKey) -> Any:
+    def guard(sender: type[models.Model], instance: models.Model, **kwargs: Any) -> None:  # pylint: disable=W0613
+        target = instance.pk if field.target_field.primary_key else getattr(instance, field.target_field.attname)
+        base_manager = model._base_manager  # pylint: disable=W0212
+        frozen = base_manager.filter(**{field.attname: target}).filter(_FROZEN_RELEASE_Q)
+        if (deleting := _release_being_deleted.get()) is not None:
+            frozen = frozen.exclude(release_id=deleting)
+        if locked := sorted(set(frozen.values_list("release__version", flat=True))):
+            raise ValidationError(
+                f"Cannot delete {sender._meta.label} {instance.pk}: {model._meta.label} rows of locked "  # pylint: disable=W0212
+                f"release {', '.join(locked)} point to it ({field.name}, "
+                f"on_delete={field.remote_field.on_delete.__name__}). Create a new release (patch) instead."
+            )
+
+    return guard
+
+
+def connect_cascade_guards(versioned_models: Iterable[type[models.Model]]) -> None:
+    """Register the cascade guard for every FK of every versioned model. Called from AppConfig.ready()."""
+    for model in versioned_models:
+        for field in _cascading_fields(model):
+            pre_delete.connect(
+                _make_cascade_guard(model, field),
+                sender=field.related_model,
+                weak=False,
+                dispatch_uid=f"versioned_cascade_guard:{model._meta.label}.{field.name}",  # pylint: disable=W0212
+            )

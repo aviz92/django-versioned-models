@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** `Release.objects` is now a `ReleaseQuerySet` manager — `update()` (and so `bulk_update()`) raises when changing those fields on a deployed release, and `delete()` raises when the QuerySet contains a deployed release.
 - Lock state is read from the database, so a stale `Release` instance can't bypass these guards.
 
+### Fixed
+- Deletes that cascade from other models can no longer change a locked or deployed release. Deleting an object that locked rows point to raises `ValidationError` if the delete would remove them (`CASCADE`) or rewrite them (`SET_NULL`, `SET_DEFAULT`, `SET()`), and the whole delete is rolled back. This also covers `Release.delete()` on a locked release that still has rows — use `delete_release`.
+
 ### Added
 - Database constraint `release_deployed_requires_locked` — a deployed release must be locked.
 
