@@ -6,7 +6,7 @@ from django.apps import apps
 from django.db import transaction
 from django.db.models import Model, ProtectedError, RestrictedError
 
-from django_versioned_models.mixins import VersionedModel
+from django_versioned_models.mixins import VersionedModel, allow_release_deletion
 from django_versioned_models.models import Release
 
 
@@ -239,12 +239,13 @@ def _delete_release(version: str) -> dict[str, int]:
     release = _get_deletable_release(version, for_update=True)
     deleted: dict[str, int] = {}
     try:
-        for model in reversed(get_versioned_models_ordered()):
-            # _base_manager is a plain Manager — skips VersionedQuerySet's lock guard.
-            _, per_model = model._base_manager.filter(release=release).delete()  # pylint: disable=W0212
+        with allow_release_deletion(release.pk):
+            for model in reversed(get_versioned_models_ordered()):
+                # _base_manager is a plain Manager — skips VersionedQuerySet's lock guard.
+                _, per_model = model._base_manager.filter(release=release).delete()  # pylint: disable=W0212
+                _merge_counts(deleted, per_model)
+            _, per_model = release.delete()
             _merge_counts(deleted, per_model)
-        _, per_model = release.delete()
-        _merge_counts(deleted, per_model)
     except (ProtectedError, RestrictedError) as exc:
         blockers = sorted({obj._meta.label for obj in exc.args[1]})  # pylint: disable=W0212
         raise ValueError(
