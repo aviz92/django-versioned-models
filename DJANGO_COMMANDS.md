@@ -38,6 +38,11 @@ This document provides a list of common Django management commands that can be u
 #### unlock_release:
 - `uv run python manage.py unlock_release --release-version v1.1.0`: Unlocks the specified release version to allow modifications.
 
+#### delete_release:
+- `uv run python manage.py delete_release --release-version v1.1.0`: Permanently deletes the specified release and all its versioned rows, after typing the version to confirm. Not allowed for deployed releases. Releases branched from it are kept, but their `based_on` is cleared (a warning lists them).
+- `uv run python manage.py delete_release --release-version v1.1.0 --dry-run`: Shows how many objects per model would be deleted, without deleting anything.
+- `uv run python manage.py delete_release --release-version v1.1.0 --force`: Deletes without the confirmation prompt (for CI/automation).
+
 #### approve_release:
 - `uv run python manage.py approve_release --release-version v1.1.0`: Approves the specified release version, indicating that it has passed all necessary checks and is ready for deployment.
 - `uv run python manage.py approve_release --release-version v1.1.0 --only-future`: Approves the specified release version, but only if it is a future release (i.e., its version number is greater than the current version). This can be used to ensure that only upcoming releases are approved, while past releases remain unaffected.

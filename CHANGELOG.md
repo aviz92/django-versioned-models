@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.1.0] - 2026-11-17
+
+### Added
+- `delete_release` management command and `delete_release()` service — permanently delete a release together with all its versioned rows (active and inactive). Works for draft and locked releases; refused for deployed releases. Releases branched from the deleted one are kept with `based_on` cleared, and the command warns about them. Supports `--dry-run` and `--force`; prompts for confirmation by default.
+- `count_release_rows()` service — number of versioned rows per model stored under a release.
+- `get_child_release_versions()` service — versions of the releases branched directly from a release.
+
+---
+
 ## [3.0.0] - 2026-11-12
 
 ### Changed

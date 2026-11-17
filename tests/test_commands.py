@@ -246,3 +246,54 @@ class TestRenameReleaseCommand:
                 new_version=locked_release.version,
                 stdout=StringIO(),
             )
+
+
+@pytest.mark.django_db
+class TestDeleteReleaseCommand:
+    def test_deletes_with_force_flag(self, release: Release, product: Product) -> None:
+        out = StringIO()
+        call_command("delete_release", release_version=release.version, force=True, stdout=out)
+        assert not Release.objects.filter(pk=release.pk).exists(), "delete_release --force must delete the release"
+        assert not Product.objects.filter(pk=product.pk).exists(), "Release rows must be deleted"
+        assert "testapp.Product: 1" in out.getvalue(), "Output must list deleted counts per model"
+
+    def test_confirmation_correct_input_deletes(self, locked_release_with_data: Release) -> None:
+        with patch("builtins.input", return_value=locked_release_with_data.version):
+            call_command("delete_release", release_version=locked_release_with_data.version, stdout=StringIO())
+        assert not Release.objects.filter(pk=locked_release_with_data.pk).exists(), "Confirmed delete must succeed"
+
+    def test_confirmation_wrong_input_raises(self, release: Release) -> None:
+        with patch("builtins.input", return_value="wrong-version"):
+            with pytest.raises(CommandError, match="Confirmation failed"):
+                call_command("delete_release", release_version=release.version, stdout=StringIO())
+        assert Release.objects.filter(pk=release.pk).exists(), "Failed confirmation must keep the release"
+
+    def test_dry_run_deletes_nothing(self, release: Release, product: Product) -> None:
+        out = StringIO()
+        call_command("delete_release", release_version=release.version, dry_run=True, stdout=out)
+        assert Release.objects.filter(pk=release.pk).exists(), "Dry run must keep the release"
+        assert "Dry run" in out.getvalue(), "Dry run must say nothing was deleted"
+        assert "testapp.Category: 1" in out.getvalue(), "Dry run must list what would be deleted"
+
+    def test_release_not_found_raises(self, db: None) -> None:
+        with pytest.raises(CommandError, match="does not exist"):
+            call_command("delete_release", release_version="ghost", force=True, stdout=StringIO())
+
+    def test_deployed_release_raises(self, locked_release: Release) -> None:
+        locked_release.deploy()
+        with pytest.raises(CommandError, match="cannot be deleted"):
+            call_command("delete_release", release_version=locked_release.version, force=True, stdout=StringIO())
+        assert Release.objects.filter(pk=locked_release.pk).exists(), "Deployed release must survive"
+
+    def test_child_release_prints_warning_and_keeps_child(self, locked_release_with_data: Release) -> None:
+        call_command(
+            "create_release",
+            release_version="v3.0.0",
+            based_on=locked_release_with_data.version,
+            stdout=StringIO(),
+        )
+        out = StringIO()
+        call_command("delete_release", release_version=locked_release_with_data.version, force=True, stdout=out)
+        assert "is the base of: v3.0.0" in out.getvalue(), "Must warn about branched releases"
+        child = Release.objects.get(version="v3.0.0")
+        assert child.based_on is None, "Child release must survive with based_on cleared"

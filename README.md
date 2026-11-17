@@ -195,6 +195,9 @@ Lock state is always read from the database, so a stale `Release` instance can't
 | `unlock_release --release-version v1.1.0` | Unlock with interactive confirmation (pre-deployment only) |
 | `unlock_release --release-version v1.1.0 --force` | Unlock without prompt — safe for CI/automation (pre-deployment only) |
 | `rename_release --release-version v1.1.0 --new-version v1.1.0-rc` | Rename a release (data untouched; blocked for deployed releases) |
+| `delete_release --release-version v1.1.0` | Permanently delete a release and all its rows, with interactive confirmation (blocked for deployed releases; branches of it are kept but lose their `based_on`, with a warning) |
+| `delete_release --release-version v1.1.0 --dry-run` | Show what would be deleted, without deleting |
+| `delete_release --release-version v1.1.0 --force` | Delete without prompt — for CI/automation |
 | `deprecate_release --release-version v1.0.0` | Soft-deprecate (data preserved, hidden by default) |
 | `deprecate_release --release-version v1.0.0 --undo` | Restore a deprecated release |
 
@@ -230,6 +233,8 @@ from django_versioned_models.models import Release
 from django_versioned_models.services import (
     create_release,
     lock_release,
+    rename_release,
+    delete_release,
     get_versioned_models,
     get_versioned_models_ordered,
 )
