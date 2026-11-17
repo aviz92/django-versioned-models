@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.0.0] - 2026-11-17
+
+### Changed
+- **Breaking:** deployed releases are now guarded on the `Release` model, not only in the services and management commands. `Release.save()` raises `ValidationError` when changing `version`, `is_locked`, `locked_at`, `deployed` or `deployed_at` of a deployed release, and `Release.delete()` raises for a deployed release. Deprecation, `description` and `based_on` stay editable.
+- **Breaking:** `Release.objects` is now a `ReleaseQuerySet` manager — `update()` (and so `bulk_update()`) raises when changing those fields on a deployed release, and `delete()` raises when the QuerySet contains a deployed release.
+- Lock state is read from the database, so a stale `Release` instance can't bypass these guards.
+
+### Added
+- Database constraint `release_deployed_requires_locked` — a deployed release must be locked.
+
+### Migration
+Run `migrate`. Migration `0003` first re-locks any deployed release that was unlocked (setting `locked_at` from `deployed_at` if missing), then adds the constraint.
+
+---
+
 ## [3.1.0] - 2026-11-17
 
 ### Added

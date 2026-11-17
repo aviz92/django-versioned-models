@@ -17,7 +17,7 @@ Drop-in versioning for Django models. Every model that inherits from `VersionedM
 
 - **Release management** — every row in every table is tagged to a release. Branch, lock, patch, and deprecate with simple commands.
 - **Data status workflow** — `DRAFT → FUTURE_DEVELOPMENT / FUTURE_DEPRECATION → APPROVED`. CI only sees approved rows. Live architect edits never break tests.
-- **Lock enforcement** — locked and deployed releases are fully immutable at the model and QuerySet level. No edits, inserts, approvals, or deletes — from Admin, API, shell, or bulk operations.
+- **Lock enforcement** — locked and deployed releases are fully immutable at the model and QuerySet level. No edits, inserts, approvals, or deletes — from Admin, API, shell, or bulk operations. Deployed releases themselves can't be unlocked, renamed, or deleted, enforced in the model and the database.
 - **Soft-delete** — rows can be deactivated without deletion. Deactivating an approved row resets it to `DRAFT` so it must be re-approved before CI sees it again.
 - **Auto-discovery** — inherit `VersionedModel` and your model is versioned. No registration needed.
 - **Topological FK sort** — models are duplicated in the correct dependency order automatically when branching a release.
@@ -180,6 +180,22 @@ Product.objects.bulk_update([...], fields)          # raises if any row is in / 
 ```
 
 Lock state is always read from the database, so a stale `Release` instance can't bypass the check. Need a correction before deployment? `unlock_release`, fix, re-approve, lock again. After deployment, create a patch release.
+
+The one deliberate exception is `delete_release`: it removes a non-deployed release (locked or not) together with all its rows.
+
+#### Deployed releases
+
+A deployed release is guarded on the `Release` model itself, not only by the management commands:
+
+```python
+release.is_locked = False; release.save()            # raises — also version, locked_at, deployed, deployed_at
+release.delete()                                     # raises
+Release.objects.filter(...).update(is_locked=False)  # raises if any matched release is deployed
+Release.objects.filter(...).delete()                 # raises if any matched release is deployed
+release.deprecate()                                  # allowed — as are description and based_on edits
+```
+
+A database constraint (`release_deployed_requires_locked`) also guarantees a deployed release is always locked.
 
 ---
 

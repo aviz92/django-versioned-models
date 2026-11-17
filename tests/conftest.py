@@ -18,6 +18,12 @@ def locked_release(db: None) -> Release:  # pylint: disable=W0621
 
 
 @pytest.fixture
+def deployed_release(locked_release: Release) -> Release:  # pylint: disable=W0621
+    locked_release.deploy()
+    return locked_release
+
+
+@pytest.fixture
 def category(release: Release) -> Category:  # pylint: disable=W0621
     return Category.objects.create(name="Electronics", release=release)
 
