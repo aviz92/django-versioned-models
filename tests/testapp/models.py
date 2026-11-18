@@ -91,3 +91,23 @@ class KitPart(VersionedModel):
 
     class Meta(VersionedModel.Meta):
         app_label = "testapp"
+
+
+class PartSpec(VersionedModel):
+    """One-to-one link between versioned models."""
+
+    part = models.OneToOneField(Part, on_delete=models.CASCADE, related_name="spec")
+    weight = models.PositiveIntegerField(default=0)
+
+    class Meta(VersionedModel.Meta):
+        app_label = "testapp"
+
+
+class Step(VersionedModel):
+    """Non-nullable self-reference — not supported when branching."""
+
+    name = models.CharField(max_length=100)
+    previous = models.ForeignKey("self", on_delete=models.PROTECT, related_name="next_steps")
+
+    class Meta(VersionedModel.Meta):
+        app_label = "testapp"

@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Lock state is read from the database, so a stale `Release` instance can't bypass these guards.
 
 ### Fixed
+- `create_release` no longer leaves self-references pointing into the source release. A row that points to another row of the same model (a parent/child tree) is remapped in a second pass, so the copy order doesn't matter — cycles and rows pointing to themselves included. A non-nullable self-reference can't be set that way and now raises `ValueError`.
+- `create_release` remaps one-to-one fields between versioned models (previously the branch failed on a uniqueness violation), and orders one-to-one targets before the models that point to them.
+- `create_release` raises `ValueError` and rolls back when a row points to a versioned row outside the source release, instead of silently keeping a reference into another release.
 - `create_release` no longer fails when a versioned model has a foreign key to a non-versioned model — the copy keeps pointing to the same shared object.
 - `create_release` no longer fails on versioned models with a many-to-many field. Links are copied after all rows, each versioned end remapped to its copy in the new release; non-versioned ends and extra fields of a custom through model are kept, and a versioned through model is copied once like any versioned model. A link to a versioned row outside the source release raises `ValueError` and the branch is rolled back.
 - Many-to-many links of locked or deployed rows can no longer be changed: `add()`, `remove()`, `clear()` and `set()` raise `ValidationError` from either side, as does a delete that would cascade into those links.
