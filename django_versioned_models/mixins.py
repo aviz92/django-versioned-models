@@ -43,6 +43,8 @@ def _raise_if_releases_locked(release_ids: Iterable[int | None], action: str) ->
 
     if not (ids := {pk for pk in release_ids if pk is not None}):
         return
+    if (building := _release_being_built.get()) is not None and ids == {building}:
+        return  # the release create_release is filling right now — unlocked and not visible to anyone else
     locked = sorted(
         Release.objects.filter(pk__in=ids)
         .filter(Q(is_locked=True) | Q(deployed=True))
@@ -273,6 +275,22 @@ class VersionedModel(models.Model):
 
 _NO_CASCADE_EFFECT = (models.DO_NOTHING, models.PROTECT, models.RESTRICT)
 _release_being_deleted: ContextVar[int | None] = ContextVar("release_being_deleted", default=None)
+_release_being_built: ContextVar[int | None] = ContextVar("release_being_built", default=None)
+
+
+@contextmanager
+def building_release(release_id: int) -> Iterator[None]:
+    """
+    Skip the per-row lock check for writes into one release while create_release fills it.
+
+    The new release is created unlocked inside create_release's own transaction, so no other
+    connection can see or lock it until the copy commits — checking it for every row is pure overhead.
+    """
+    token = _release_being_built.set(release_id)
+    try:
+        yield
+    finally:
+        _release_being_built.reset(token)
 
 
 @contextmanager

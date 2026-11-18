@@ -2,22 +2,35 @@
 Core services — create_release, lock_release, rename_release, delete_release, and auto-discovery.
 """
 
+from itertools import batched
 from typing import Any
 
 from django.apps import apps
-from django.db import transaction
+from django.db import connections, router, transaction
 from django.db.models import ManyToManyField, Model, ProtectedError, RestrictedError
 
-from django_versioned_models.mixins import VersionedModel, allow_release_deletion
+from django_versioned_models.mixins import VersionedModel, allow_release_deletion, building_release
 from django_versioned_models.models import Release
+
+# Rows per INSERT when branching a release.
+COPY_BATCH_SIZE = 1000
 
 
 def get_versioned_models() -> list[type[Model]]:
     """
     Auto-discover all models that inherit from VersionedModel.
     No manual registration needed — just inherit and you're in.
+
+    Proxy models are skipped: they share their concrete model's table, so including them would
+    copy, count and approve the same rows twice.
     """
-    return [model for model in apps.get_models() if issubclass(model, VersionedModel) and model is not VersionedModel]
+    return [
+        model
+        for model in apps.get_models()
+        if issubclass(model, VersionedModel)
+        and model is not VersionedModel
+        and not model._meta.proxy  # pylint: disable=W0212
+    ]
 
 
 def get_versioned_models_ordered() -> list[type[VersionedModel]]:
@@ -83,15 +96,27 @@ def create_release(version: str, based_on_version: str, description: str = "", u
         created_by_id=user_id,
     )
 
-    id_mapping = {}
+    id_mapping: dict[str, dict[Any, Any]] = {}  # model key -> {old pk: new pk}
     ordered = get_versioned_models_ordered()
-    for model in ordered:
-        _copy_model_rows(model, source_release, new_release, id_mapping)
-    # Links last — every versioned row on both ends of a link must already have its copy.
-    for model in ordered:
-        _copy_m2m_links(model, source_release, id_mapping)
+    with building_release(new_release.pk):
+        for model in ordered:
+            _copy_model_rows(model, source_release, new_release, id_mapping)
+        # Links last — every versioned row on both ends of a link must already have its copy.
+        for model in ordered:
+            _copy_m2m_links(model, source_release, id_mapping)
 
     return new_release
+
+
+def _can_bulk_copy(model: type[Model]) -> bool:
+    """
+    Copy with bulk_create unless the model opts out, uses multi-table inheritance (not supported, but
+    bulk_create can't insert it at all), or the database can't return the new primary keys from a bulk
+    insert (MySQL) — those copy row by row with save().
+    """
+    if not getattr(model, "copy_with_bulk_create", True) or model._meta.parents:  # pylint: disable=W0212
+        return False
+    return connections[router.db_for_write(model)].features.can_return_rows_from_bulk_insert
 
 
 def _model_key(model: type[Model]) -> str:
@@ -114,9 +139,10 @@ def _copy_m2m_links(model: type[VersionedModel], source_release: Release, id_map
         if issubclass(through, VersionedModel):
             continue
         source_fk = field.m2m_field_name()
-        links = through._base_manager.filter(**{f"{source_fk}__release": source_release})  # pylint: disable=W0212
-        new_links = [through(**_remapped_values(through, link, id_mapping, field)) for link in links]
-        through._base_manager.bulk_create(new_links)  # pylint: disable=W0212
+        base_manager = through._base_manager  # pylint: disable=W0212
+        links = base_manager.filter(**{f"{source_fk}__release": source_release}).order_by("pk")
+        for batch in batched(links.iterator(chunk_size=COPY_BATCH_SIZE), COPY_BATCH_SIZE):
+            base_manager.bulk_create([through(**_remapped_values(through, link, id_mapping, field)) for link in batch])
 
 
 def _remapped_values(through: type[Model], link: Model, id_mapping: dict, field: ManyToManyField) -> dict[str, Any]:
@@ -127,12 +153,12 @@ def _remapped_values(through: type[Model], link: Model, id_mapping: dict, field:
         value = getattr(link, through_field.attname)
         if through_field.is_relation and value is not None:
             if (mapping := id_mapping.get(_model_key(through_field.related_model))) is not None:
-                if (new_row := mapping.get(value)) is None:
+                if (new_pk := mapping.get(value)) is None:
                     raise ValueError(
                         f"Cannot copy {field.model.__name__}.{field.name}: it links to "
                         f"{through_field.related_model.__name__} {value}, which is not in the source release."
                     )
-                value = new_row.pk
+                value = new_pk
         values[through_field.attname] = value
     return values
 
@@ -142,8 +168,13 @@ def _copy_model_rows(
 ) -> None:
     """
     Copy all rows of a model from source_release to new_release, remapping FKs.
-    Uses all_rows() to include inactive rows — architects can reactivate them
-    in the new release if needed. Active state is preserved as-is.
+    Includes inactive rows — architects can reactivate them in the new release if needed.
+    Active state is preserved as-is.
+
+    Rows are read and inserted in batches of COPY_BATCH_SIZE with bulk_create, which skips the
+    model's save() and the pre_save / post_save signals. A model that needs them during a branch
+    can set `copy_with_bulk_create = False` to be copied row by row with save() instead (also the
+    fallback for databases that can't return bulk-inserted keys).
 
     FK and one-to-one fields to versioned models point to the copies in the new release; fields to
     non-versioned models keep their value. A self-reference (a row pointing to another row of the same
@@ -154,35 +185,52 @@ def _copy_model_rows(
         ValueError: if a row points to a versioned row outside the source release (it has no copy),
             or the model has a non-nullable self-reference (it can't be set in a second pass).
     """
-    source_rows = list(model.objects.all_rows(source_release).order_by("pk"))
+    source_rows = model._base_manager.filter(release=source_release).order_by("pk")  # pylint: disable=W0212
     mapping = id_mapping[_model_key(model)] = {}
     self_fks = [f for f in _forward_fks(model) if f.related_model is model]
-    if source_rows and (required := [f.name for f in self_fks if not f.null]):
+    _check_self_references_nullable(model, self_fks, source_rows)
+
+    bulk = _can_bulk_copy(model)
+    deferred: list[tuple[Model, Any, Any]] = []  # (new row, self-FK field, old target pk)
+    for batch in batched(source_rows.iterator(chunk_size=COPY_BATCH_SIZE), COPY_BATCH_SIZE):
+        copies = [_copied_values(model, row, self_fks, id_mapping) for row in batch]
+        new_rows = [model(**values, release=new_release) for values, _ in copies]
+        if bulk:
+            model._base_manager.bulk_create(new_rows)  # pylint: disable=W0212
+        else:
+            for new_row in new_rows:
+                new_row.save(force_insert=True)
+        for row, new_row, (_, pending) in zip(batch, new_rows, copies, strict=True):
+            mapping[row.pk] = new_row.pk
+            deferred.extend((new_row, field, value) for field, value in pending)
+
+    _apply_self_references(model, mapping, deferred)
+
+
+def _check_self_references_nullable(model: type[Model], self_fks: list[Any], source_rows: Any) -> None:
+    if (required := [f.name for f in self_fks if not f.null]) and source_rows.exists():
         raise ValueError(
             f"Cannot copy {model.__name__}: self-reference {', '.join(required)} must be nullable "
             f"so it can be set after all rows are copied."
         )
 
-    deferred: list[tuple[Model, Any, Any]] = []  # (new row, self-FK field, old target pk)
-    for row in source_rows:
-        field_values = {}
-        row_deferred = []
-        for field in model._meta.concrete_fields:  # pylint: disable=W0212
-            if field.primary_key or field.name == "release":
-                continue
-            value = getattr(row, field.attname)
-            if value is not None and field in self_fks:
-                row_deferred.append((field, value))
-                value = None
-            elif value is not None and field.is_relation:
-                value = _remap(model, row, field, value, id_mapping)
-            field_values[field.attname] = value  # attname: an FK to a non-versioned model keeps its id
 
-        new_row = model.objects.create(**field_values, release=new_release)
-        mapping[row.pk] = new_row
-        deferred.extend((new_row, field, value) for field, value in row_deferred)
-
-    _apply_self_references(model, mapping, deferred)
+def _copied_values(
+    model: type[Model], row: Model, self_fks: list[Any], id_mapping: dict
+) -> tuple[dict[str, Any], list[tuple[Any, Any]]]:
+    """Field values for the copy of `row` (keyed by attname), and the self-references to set afterwards."""
+    values, pending = {}, []
+    for field in model._meta.concrete_fields:  # pylint: disable=W0212
+        if field.primary_key or field.name == "release":
+            continue
+        value = getattr(row, field.attname)
+        if value is not None and field in self_fks:
+            pending.append((field, value))
+            value = None
+        elif value is not None and field.is_relation:
+            value = _remap(model, row, field, value, id_mapping)
+        values[field.attname] = value  # attname: an FK to a non-versioned model keeps its id
+    return values, pending
 
 
 def _apply_self_references(model: type[Model], mapping: dict, deferred: list[tuple[Model, Any, Any]]) -> None:
@@ -190,13 +238,15 @@ def _apply_self_references(model: type[Model], mapping: dict, deferred: list[tup
     if not deferred:
         return
     for new_row, field, old_target in deferred:
-        if (target := mapping.get(old_target)) is None:
+        if (target_pk := mapping.get(old_target)) is None:
             raise ValueError(
                 f"Cannot copy {model.__name__}.{field.name}: it points to {model.__name__} {old_target}, "
                 f"which is not in the source release."
             )
-        setattr(new_row, field.attname, target.pk)
-    model.objects.bulk_update({row for row, _, _ in deferred}, sorted({f.attname for _, f, _ in deferred}))
+        setattr(new_row, field.attname, target_pk)
+    rows = list({id(row): row for row, _, _ in deferred}.values())
+    fields = sorted({f.attname for _, f, _ in deferred})
+    model._base_manager.bulk_update(rows, fields, batch_size=COPY_BATCH_SIZE)  # pylint: disable=W0212
 
 
 def _forward_fks(model: type[Model]) -> list[Any]:
@@ -212,12 +262,12 @@ def _remap(model: type[Model], row: Model, field: Any, value: Any, id_mapping: d
     """Map an FK value to the copy of its target in the new release; non-versioned targets keep it."""
     if (mapping := id_mapping.get(_model_key(field.related_model))) is None:
         return value
-    if (new_target := mapping.get(value)) is None:
+    if (new_pk := mapping.get(value)) is None:
         raise ValueError(
             f"Cannot copy {model.__name__} {row.pk}: {field.name} points to "
             f"{field.related_model.__name__} {value}, which is not in the source release."
         )
-    return new_target.pk
+    return new_pk
 
 
 @transaction.atomic

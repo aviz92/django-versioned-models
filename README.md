@@ -20,7 +20,7 @@ Drop-in versioning for Django models. Every model that inherits from `VersionedM
 - **Lock enforcement** — locked and deployed releases are fully immutable at the model and QuerySet level. No edits, inserts, approvals, or deletes — from Admin, API, shell, or bulk operations. Deployed releases themselves can't be unlocked, renamed, or deleted, enforced in the model and the database.
 - **Soft-delete** — rows can be deactivated without deletion. Deactivating an approved row resets it to `DRAFT` so it must be re-approved before CI sees it again.
 - **Auto-discovery** — inherit `VersionedModel` and your model is versioned. No registration needed.
-- **Topological FK sort** — models are duplicated in the correct dependency order automatically when branching a release. Many-to-many links are copied too, remapped to the new release's rows.
+- **Topological FK sort** — models are duplicated in the correct dependency order automatically when branching a release. Many-to-many links are copied too, remapped to the new release's rows. Rows are inserted in batches of 1,000, so branching runs a handful of queries per model instead of two per row.
 - **Soft deprecation** — old releases are hidden by default but data is always preserved and reversible.
 - **CI-ready commands** — `create_release`, `approve_release`, `lock_release`, and more, ready to plug into any pipeline.
 
@@ -233,6 +233,21 @@ A database constraint (`release_deployed_requires_locked`) also guarantees a dep
 | `delete_release --release-version v1.1.0 --force` | Delete without prompt — for CI/automation |
 | `deprecate_release --release-version v1.0.0` | Soft-deprecate (data preserved, hidden by default) |
 | `deprecate_release --release-version v1.0.0 --undo` | Restore a deprecated release |
+
+---
+
+### Branching and `save()`
+
+`create_release` copies rows with `bulk_create`, which does not call the model's `save()` or send `pre_save` / `post_save`. If a versioned model relies on them, opt it out — it is then copied row by row with `save()`:
+
+```python
+class Product(VersionedModel):
+    copy_with_bulk_create = False
+```
+
+The same row-by-row path is used automatically for databases that can't return primary keys from a bulk insert (MySQL).
+
+Proxy models of a versioned model are fine — they share its table and are not copied separately. Multi-table inheritance from a versioned model is not supported.
 
 ---
 

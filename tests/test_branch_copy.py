@@ -1,8 +1,22 @@
 import pytest
 
+from django_versioned_models import services
 from django_versioned_models.models import Release
-from django_versioned_models.services import create_release, get_versioned_models_ordered
-from tests.testapp.models import Category, Part, PartSpec, Product, Step
+from django_versioned_models.services import (
+    count_release_rows,
+    create_release,
+    get_versioned_models,
+    get_versioned_models_ordered,
+)
+from tests.testapp.models import Category, CategoryProxy, Part, PartSpec, Product, Step
+
+
+@pytest.fixture(autouse=True, params=["bulk", "row_by_row"])
+def copy_mode(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    """Run every test in this module through both copy paths."""
+    if request.param == "row_by_row":
+        monkeypatch.setattr(services, "_can_bulk_copy", lambda model: False)
+    return request.param
 
 
 def _branch(release: Release) -> Release:
@@ -85,3 +99,18 @@ class TestForeignKeyCopy:
     def test_one_to_one_target_is_ordered_first(self) -> None:
         ordered = get_versioned_models_ordered()
         assert ordered.index(Part) < ordered.index(PartSpec), "One-to-one target must be copied first"
+
+
+@pytest.mark.django_db
+class TestProxyModels:
+    def test_proxy_model_is_not_a_separate_versioned_model(self) -> None:
+        assert CategoryProxy not in get_versioned_models(), "A proxy shares its model's table — skip it"
+        assert Category in get_versioned_models(), "The concrete model must still be discovered"
+
+    def test_create_release_copies_rows_once_with_proxy(self, release: Release) -> None:
+        Category.objects.create(name="Electronics", release=release)
+        new = _branch(release)
+        assert Category.objects.all_rows(new).count() == 1, "A proxy model must not duplicate copied rows"
+
+    def test_count_release_rows_not_doubled_by_proxy(self, release: Release, category: Category) -> None:
+        assert count_release_rows(release) == {"testapp.Category": 1}, "A proxy model must not double the count"
