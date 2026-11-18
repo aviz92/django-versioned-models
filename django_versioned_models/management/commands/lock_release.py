@@ -4,7 +4,7 @@ Management command: lock_release
 Called by CI at deployment time to freeze a release.
 
 Usage:
-    python manage.py lock_release --version v2.1.0
+    python manage.py lock_release --release-version v2.1.0
 """
 
 from typing import Any

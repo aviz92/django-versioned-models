@@ -1,5 +1,9 @@
 """
-Core services — create_release, lock_release, rename_release, delete_release, and auto-discovery.
+Core services — every release operation the management commands run, plus auto-discovery:
+create, approve, lock, unlock, deploy, deprecate, rename and delete.
+
+The commands only parse arguments, confirm with the user and print; the rules live here, so they
+apply the same way from code, an API view or the shell.
 """
 
 from itertools import batched
@@ -9,7 +13,7 @@ from django.apps import apps
 from django.db import connections, router, transaction
 from django.db.models import ManyToManyField, Model, ProtectedError, RestrictedError
 
-from django_versioned_models.mixins import VersionedModel, allow_release_deletion, building_release
+from django_versioned_models.mixins import DataStatus, VersionedModel, allow_release_deletion, building_release
 from django_versioned_models.models import Release
 
 # Rows per INSERT when branching a release.
@@ -273,15 +277,119 @@ def _remap(model: type[Model], row: Model, field: Any, value: Any, id_mapping: d
 @transaction.atomic
 def lock_release(version: str) -> Release:
     """Lock a release — immutable after this."""
-    try:
-        release = Release.objects.get(version=version)
-    except Release.DoesNotExist as exc:
-        raise ValueError(f'Release "{version}" does not exist.') from exc
+    release = _get_release(version, for_update=True)
 
     if release.is_locked:
         raise ValueError(f'Release "{version}" is already locked.')
 
     release.lock()
+    return release
+
+
+def _get_release(version: str, for_update: bool = False) -> Release:
+    queryset = Release.objects.select_for_update() if for_update else Release.objects.all()
+    try:
+        return queryset.get(version=version)
+    except Release.DoesNotExist as exc:
+        raise ValueError(f'Release "{version}" does not exist.') from exc
+
+
+@transaction.atomic
+def approve_release(version: str) -> dict[str, int]:
+    """
+    Approve every active DRAFT row of an unlocked release.
+    FUTURE_DEVELOPMENT, FUTURE_DEPRECATION and inactive rows are left untouched.
+
+    Returns:
+        Approved row counts per model label (models with nothing to approve are omitted).
+
+    Raises:
+        ValueError: if the release does not exist or is locked / deployed.
+    """
+    release = _get_release(version, for_update=True)
+    if release.is_locked or release.deployed:
+        raise ValueError(
+            f'Release "{version}" is locked — approve rows before locking. '
+            f"Flow: approve_release -> lock_release -> deploy_release."
+        )
+    approved = {}
+    for model in get_versioned_models():
+        # for_release() filters active=True, so inactive rows are skipped
+        if (
+            count := model.objects.for_release(release)
+            .filter(status=DataStatus.DRAFT)
+            .update(status=DataStatus.APPROVED)
+        ):
+            approved[model._meta.label] = count  # pylint: disable=W0212
+    return approved
+
+
+def unlock_release(version: str, dry_run: bool = False) -> Release:
+    """
+    Unlock a locked release that has not been deployed.
+
+    Args:
+        version: Version string of the release to unlock.
+        dry_run: Only validate — lets a caller confirm with the user before unlocking.
+
+    Raises:
+        ValueError: if the release does not exist, is deployed, or is not locked.
+    """
+    if dry_run:
+        return _get_unlockable_release(version)
+    with transaction.atomic():
+        release = _get_unlockable_release(version, for_update=True)
+        release.is_locked = False
+        release.locked_at = None
+        release.save(update_fields=["is_locked", "locked_at"])
+    return release
+
+
+def _get_unlockable_release(version: str, for_update: bool = False) -> Release:
+    release = _get_release(version, for_update=for_update)
+    if release.deployed:
+        raise ValueError(
+            f'Release "{version}" has been deployed to production and cannot be unlocked. '
+            f"Create a patch release instead: "
+            f"python manage.py create_release --release-version <new> --based-on {version}"
+        )
+    if not release.is_locked:
+        raise ValueError(f'Release "{version}" is not locked.')
+    return release
+
+
+@transaction.atomic
+def deploy_release(version: str) -> Release:
+    """
+    Mark a locked release as deployed. Deployed releases can never be unlocked, renamed or deleted.
+
+    Raises:
+        ValueError: if the release does not exist, is already deployed, or is not locked.
+    """
+    release = _get_release(version, for_update=True)
+    if release.deployed:
+        raise ValueError(f'Release "{version}" is already deployed.')
+    release.deploy()  # raises ValueError if not locked
+    return release
+
+
+@transaction.atomic
+def deprecate_release(version: str, undo: bool = False) -> Release:
+    """
+    Deprecate a release (hidden by default, data preserved), or undo it with undo=True.
+
+    Raises:
+        ValueError: if the release does not exist, or is already in the requested state.
+    """
+    release = _get_release(version, for_update=True)
+    if undo:
+        if not release.is_deprecated:
+            raise ValueError(f'Release "{version}" is not deprecated.')
+        release.undeprecate()
+    else:
+        if release.is_deprecated:
+            raise ValueError(f'Release "{version}" is already deprecated.')
+        release.deprecate()
     return release
 
 

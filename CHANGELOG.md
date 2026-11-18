@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rows are read in batches too, and the old-to-new mapping keeps only primary keys, so memory no longer grows with full row objects.
 
 ### Fixed
+- `lock_release` usage example in its module docstring used the old `--version` flag; it is `--release-version`.
 - Proxy models of versioned models are no longer treated as separate versioned models. They share their model's table, so `create_release` copied those rows twice, and `count_release_rows`, `delete_release --dry-run` and `approve_release` went over them twice.
 - `create_release` no longer leaves self-references pointing into the source release. A row that points to another row of the same model (a parent/child tree) is remapped in a second pass, so the copy order doesn't matter — cycles and rows pointing to themselves included. A non-nullable self-reference can't be set that way and now raises `ValueError`.
 - `create_release` remaps one-to-one fields between versioned models (previously the branch failed on a uniqueness violation), and orders one-to-one targets before the models that point to them.
@@ -30,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Deletes that cascade from other models can no longer change a locked or deployed release. Deleting an object that locked rows point to raises `ValidationError` if the delete would remove them (`CASCADE`) or rewrite them (`SET_NULL`, `SET_DEFAULT`, `SET()`), and the whole delete is rolled back. This also covers `Release.delete()` on a locked release that still has rows — use `delete_release`.
 
 ### Added
+- `approve_release()`, `unlock_release()`, `deploy_release()` and `deprecate_release()` services. Every management command now delegates to the services layer, so the same rules apply from code, an API view or the shell; the commands only parse arguments, confirm and print. Command behavior and messages are unchanged. Release state changes now lock the release row (`select_for_update`) while they run.
 - Database constraint `release_deployed_requires_locked` — a deployed release must be locked.
 
 ### Migration

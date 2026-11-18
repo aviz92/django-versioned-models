@@ -280,7 +280,11 @@ from django_versioned_models.mixins import VersionedModel, DataStatus
 from django_versioned_models.models import Release
 from django_versioned_models.services import (
     create_release,
+    approve_release,
     lock_release,
+    unlock_release,
+    deploy_release,
+    deprecate_release,
     rename_release,
     delete_release,
     get_versioned_models,
