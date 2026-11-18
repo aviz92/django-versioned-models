@@ -15,7 +15,7 @@ from django_versioned_models.services import (
     lock_release,
     rename_release,
 )
-from tests.testapp.models import Category, CategoryNote, Product
+from tests.testapp.models import Category, CategoryNote, Part, Product, Supplier
 
 
 @pytest.mark.django_db
@@ -130,6 +130,16 @@ class TestCreateRelease:
         assert (
             Release.objects.count() == release_count_before
         ), "Transaction must roll back — no new release must be persisted on error"
+
+
+@pytest.mark.django_db
+class TestCreateReleaseNonVersionedForeignKey:
+    def test_create_release_keeps_fk_to_non_versioned_model(self, release: Release, supplier: Supplier) -> None:
+        Part.objects.create(name="Bolt", release=release, supplier=supplier)
+        release.lock()
+        new = create_release("v2.0.0", release.version)
+        assert Part.objects.get(release=new).supplier_id == supplier.pk, "FK to a shared model must be kept"
+        assert Supplier.objects.count() == 1, "Non-versioned rows must not be duplicated"
 
 
 @pytest.mark.django_db

@@ -20,7 +20,7 @@ Drop-in versioning for Django models. Every model that inherits from `VersionedM
 - **Lock enforcement** — locked and deployed releases are fully immutable at the model and QuerySet level. No edits, inserts, approvals, or deletes — from Admin, API, shell, or bulk operations. Deployed releases themselves can't be unlocked, renamed, or deleted, enforced in the model and the database.
 - **Soft-delete** — rows can be deactivated without deletion. Deactivating an approved row resets it to `DRAFT` so it must be re-approved before CI sees it again.
 - **Auto-discovery** — inherit `VersionedModel` and your model is versioned. No registration needed.
-- **Topological FK sort** — models are duplicated in the correct dependency order automatically when branching a release.
+- **Topological FK sort** — models are duplicated in the correct dependency order automatically when branching a release. Many-to-many links are copied too, remapped to the new release's rows.
 - **Soft deprecation** — old releases are hidden by default but data is always preserved and reversible.
 - **CI-ready commands** — `create_release`, `approve_release`, `lock_release`, and more, ready to plug into any pipeline.
 
@@ -189,6 +189,13 @@ Supplier.objects.filter(...).delete()  # same
 locked_release.delete()              # raises if the release still has rows — use delete_release
 ```
 
+Many-to-many links of locked rows are frozen as well — `add()`, `remove()`, `clear()` and `set()` raise from either side of the relation, and so does deleting an object that would cascade into those links:
+
+```python
+locked_part.tags.add(tag)   # raises
+tag.parts.clear()           # raises if any linked part is in a locked release
+```
+
 Like an integrity error, this is raised inside the delete's transaction — inside an outer `atomic()` block, exit it (or wrap the delete in a nested `atomic()`) before running more queries.
 
 The one deliberate exception is `delete_release`: it removes a non-deployed release (locked or not) together with all its rows.
@@ -214,7 +221,7 @@ A database constraint (`release_deployed_requires_locked`) also guarantees a dep
 | Command | Description |
 |---------|-------------|
 | `create_release --release-version v1.0.0` | Create a standalone release (unlocked) |
-| `create_release --release-version v1.1.0 --based-on v1.0.0` | Branch from a locked release — copies all rows |
+| `create_release --release-version v1.1.0 --based-on v1.0.0` | Branch from a locked release — copies all rows and their many-to-many links |
 | `lock_release --release-version v1.1.0` | Lock a release (immutable) |
 | `approve_release --release-version v1.1.0` | Approve all active DRAFT rows (CI only — FUTURE_DEVELOPMENT, FUTURE_DEPRECATION, and inactive untouched) |
 | `deploy_release --release-version v1.1.0` | Mark as deployed — permanently blocks unlock |
