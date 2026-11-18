@@ -13,8 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** deployed releases are now guarded on the `Release` model, not only in the services and management commands. `Release.save()` raises `ValidationError` when changing `version`, `is_locked`, `locked_at`, `deployed` or `deployed_at` of a deployed release, and `Release.delete()` raises for a deployed release. Deprecation, `description` and `based_on` stay editable.
 - **Breaking:** `Release.objects` is now a `ReleaseQuerySet` manager — `update()` (and so `bulk_update()`) raises when changing those fields on a deployed release, and `delete()` raises when the QuerySet contains a deployed release.
 - Lock state is read from the database, so a stale `Release` instance can't bypass these guards.
+- During `create_release`, versioned rows are inserted with `bulk_create`, which skips `save()` and the `pre_save` / `post_save` signals. Set `copy_with_bulk_create = False` on a model to copy it row by row with `save()`. Multi-table inheritance and databases that can't return bulk-inserted keys (MySQL) fall back to row by row automatically.
+
+### Performance
+- `create_release` copies rows in batches of 1,000 with `bulk_create` instead of one `save()` per row, and no longer runs the lock check for every row it writes into the release it is building (that release is created unlocked inside the same transaction and isn't visible to other connections). Branching runs a handful of queries per model instead of two per row — about 25 queries instead of 22,000 for 11,000 rows. The 3.0.0 per-row lock check had doubled the query count.
+- Rows are read in batches too, and the old-to-new mapping keeps only primary keys, so memory no longer grows with full row objects.
 
 ### Fixed
+- Proxy models of versioned models are no longer treated as separate versioned models. They share their model's table, so `create_release` copied those rows twice, and `count_release_rows`, `delete_release --dry-run` and `approve_release` went over them twice.
 - `create_release` no longer leaves self-references pointing into the source release. A row that points to another row of the same model (a parent/child tree) is remapped in a second pass, so the copy order doesn't matter — cycles and rows pointing to themselves included. A non-nullable self-reference can't be set that way and now raises `ValueError`.
 - `create_release` remaps one-to-one fields between versioned models (previously the branch failed on a uniqueness violation), and orders one-to-one targets before the models that point to them.
 - `create_release` raises `ValueError` and rolls back when a row points to a versioned row outside the source release, instead of silently keeping a reference into another release.

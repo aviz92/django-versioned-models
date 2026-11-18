@@ -111,3 +111,11 @@ class Step(VersionedModel):
 
     class Meta(VersionedModel.Meta):
         app_label = "testapp"
+
+
+class CategoryProxy(Category):
+    """Proxy of a versioned model — shares Category's table and must not be copied separately."""
+
+    class Meta:
+        proxy = True
+        app_label = "testapp"
