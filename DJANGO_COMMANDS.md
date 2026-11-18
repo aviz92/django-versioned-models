@@ -43,6 +43,9 @@ This document provides a list of common Django management commands that can be u
 - `uv run python manage.py delete_release --release-version v1.1.0 --dry-run`: Shows how many objects per model would be deleted, without deleting anything.
 - `uv run python manage.py delete_release --release-version v1.1.0 --force`: Deletes without the confirmation prompt (for CI/automation).
 
+#### restore_releases:
+- `uv run python manage.py restore_releases dump.json`: Restores a full dump (from `dumpdata`) that contains locked or deployed releases — plain `loaddata` refuses to write those. Verifies afterwards that no reference crosses releases and rolls the whole load back if one does.
+
 #### check_release_isolation:
 - `uv run python manage.py check_release_isolation`: Read-only scan for references that cross releases (a row pointing to a versioned row of another release). Lists each offending field with example row ids and exits with an error if any are found — run it after upgrading or in CI.
 

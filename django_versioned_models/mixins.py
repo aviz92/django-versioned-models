@@ -25,10 +25,10 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any
 
-from django.core.exceptions import ValidationError
+from django.core.exceptions import NON_FIELD_ERRORS, ValidationError
 from django.db import models
 from django.db.models import Q
-from django.db.models.signals import m2m_changed, pre_delete
+from django.db.models.signals import m2m_changed, pre_delete, pre_save
 
 _FROZEN_RELEASE_Q = Q(release__is_locked=True) | Q(release__deployed=True)
 
@@ -39,22 +39,31 @@ def _raise_if_releases_locked(release_ids: Iterable[int | None], action: str) ->
 
     Always reads lock state from the DB — a cached Release instance may be stale.
     """
+
+    if locked := _locked_versions(release_ids):
+        raise ValidationError(_locked_message(locked, action))
+
+
+def _locked_versions(release_ids: Iterable[int | None]) -> list[str]:
+    """Versions of the given releases that are locked or deployed, read from the DB."""
     from django_versioned_models.models import Release  # pylint: disable=C0415
 
     if not (ids := {pk for pk in release_ids if pk is not None}):
-        return
+        return []
     if (building := _release_being_built.get()) is not None and ids == {building}:
-        return  # the release create_release is filling right now — unlocked and not visible to anyone else
-    locked = sorted(
+        return []  # the release create_release is filling right now — unlocked and not visible to anyone else
+    return sorted(
         Release.objects.filter(pk__in=ids)
         .filter(Q(is_locked=True) | Q(deployed=True))
         .values_list("version", flat=True)
     )
-    if locked:
-        raise ValidationError(
-            f"Release {', '.join(locked)} is locked and cannot be modified ({action}). "
-            "Create a new release (patch) instead."
-        )
+
+
+def _locked_message(locked: list[str], action: str) -> str:
+    return (
+        f"Release {', '.join(locked)} is locked and cannot be modified ({action}). "
+        "Create a new release (patch) instead."
+    )
 
 
 def _release_id_from_kwargs(kwargs: dict[str, Any]) -> int | None:
@@ -318,6 +327,66 @@ class VersionedModel(models.Model):
             release_ids.add(type(self)._base_manager.filter(pk=self.pk).values_list("release_id", flat=True).first())
         return release_ids
 
+    # ── Validation (forms, admin, full_clean) ────────────────────────────────
+
+    def full_clean(self, exclude: Iterable[str] | None = None, validate_unique: bool = True, **kwargs: Any) -> None:
+        # Remember which fields the caller (e.g. a ModelForm) leaves out, so clean() can attach each error
+        # to a field the form actually shows — or to the form as a whole.
+        self._full_clean_exclude = set(exclude or ())  # pylint: disable=W0201
+        try:
+            super().full_clean(exclude=exclude, validate_unique=validate_unique, **kwargs)
+        finally:
+            del self._full_clean_exclude
+
+    def clean(self) -> None:
+        """
+        Run the release rules before anything is written, so a form shows them as errors instead of the
+        save failing: the row's release must not be locked or deployed, rows can't move between releases,
+        and every FK / one-to-one to a versioned model must point into the row's own release.
+        Subclasses overriding clean() must call super().clean().
+        """
+        super().clean()
+        if errors := self.release_errors(getattr(self, "_full_clean_exclude", set())):
+            raise ValidationError(errors)
+
+    def release_errors(self, exclude: Iterable[str] = (), stored_from_db: bool = False) -> dict[str, list[str]]:
+        """
+        The release-rule violations this row would hit if saved now, keyed by field name — or by
+        NON_FIELD_ERRORS for a field in `exclude` (not shown on the form). Empty if the row can be saved.
+
+        `stored_from_db` reads the stored row by primary key even for an instance Django considers new —
+        rows loaded from a fixture are, even when they overwrite an existing row.
+        """
+        exclude = set(exclude)
+        errors: dict[str, list[str]] = {}
+
+        def add(field: str, message: str) -> None:
+            errors.setdefault(NON_FIELD_ERRORS if field in exclude else field, []).append(message)
+
+        if self.release_id is None:
+            return errors
+        stored_release = None
+        if self.pk is not None and (stored_from_db or not self._state.adding):
+            # pylint: disable=W0212
+            stored_release = type(self)._base_manager.filter(pk=self.pk).values_list("release_id", flat=True).first()
+        if locked := _locked_versions([stored_release]):
+            errors.setdefault(NON_FIELD_ERRORS, []).append(_locked_message(locked, "save"))
+            return errors
+        if locked := _locked_versions([self.release_id]):
+            add("release", _locked_message(locked, "save"))
+            return errors
+        if stored_release is not None and stored_release != self.release_id:
+            add("release", _MOVE_ERROR)
+            return errors
+        for field in _versioned_fks(type(self)):
+            if (target_pk := getattr(self, field.attname)) is None:
+                continue
+            base_manager = field.related_model._base_manager  # pylint: disable=W0212
+            target_release = base_manager.filter(pk=target_pk).values_list("release_id", flat=True).first()
+            if target_release is not None and target_release != self.release_id:
+                add(field.name, _isolation_error(type(self), field.name, field.related_model, target_pk))
+        return errors
+
     def save(self, *args: Any, **kwargs: Any) -> None:
         stored_release = None
         if not self._state.adding:
@@ -355,8 +424,38 @@ class VersionedModel(models.Model):
 # (or wrapped in a nested atomic()) before running further queries.
 
 _NO_CASCADE_EFFECT = (models.DO_NOTHING, models.PROTECT, models.RESTRICT)
+_cascade_guards: dict[type[models.Model], dict[str, Any]] = {}  # sender -> {dispatch_uid: guard}
 _release_being_deleted: ContextVar[int | None] = ContextVar("release_being_deleted", default=None)
 _release_being_built: ContextVar[int | None] = ContextVar("release_being_built", default=None)
+_raw_load_allowed: ContextVar[bool] = ContextVar("raw_load_allowed", default=False)
+
+
+@contextmanager
+def allow_raw_load() -> Iterator[None]:
+    """
+    Let fixture loading (loaddata) write rows of locked or deployed releases — for restoring a full dump.
+    Used by the restore_releases command, which verifies isolation after the load.
+    """
+    token = _raw_load_allowed.set(True)
+    try:
+        yield
+    finally:
+        _raw_load_allowed.reset(token)
+
+
+# pylint: disable-next=W0613
+def _raw_save_guard(sender: type[models.Model], instance: models.Model, raw: bool, **kwargs: Any) -> None:
+    """
+    pre_save guard for fixture loading. loaddata saves "raw" — past save() and so past every check there —
+    so the same rules run here: no writes to a locked release, no moves, no references across releases,
+    and no changes to a deployed release's frozen fields.
+    """
+    if not raw or _raw_load_allowed.get():
+        return
+    if isinstance(instance, VersionedModel) and (errors := instance.release_errors(stored_from_db=True)):
+        raise ValidationError(errors)
+    if (check := getattr(instance, "deployed_change_error", None)) and (message := check()):
+        raise ValidationError(message)
 
 
 @contextmanager
@@ -452,8 +551,8 @@ def _make_m2m_guard(field: models.ManyToManyField) -> Any:
         pk_set: set[Any] | None,
         **kwargs: Any,
     ) -> None:
-        if action not in ("pre_add", "pre_remove", "pre_clear"):
-            return
+        if action not in ("pre_add", "pre_remove", "pre_clear") or _raw_load_allowed.get():
+            return  # a restore (allow_raw_load) re-creates links of locked rows; isolation is verified after it
         if action == "pre_add" and isinstance(instance, VersionedModel) and issubclass(model, VersionedModel):
             base_manager = model._base_manager  # pylint: disable=W0212
             other = base_manager.filter(pk__in=pk_set).exclude(release_id=instance.release_id)
@@ -472,6 +571,30 @@ def _make_m2m_guard(field: models.ManyToManyField) -> Any:
     return guard
 
 
+def _register_guard(sender: type[models.Model], uid: str, guard: Any) -> Any:
+    """Keep this library's guards per sender (keyed like the signal's dispatch_uid) for delete_errors()."""
+    _cascade_guards.setdefault(sender, {})[uid] = guard
+    return guard
+
+
+def delete_errors(instance: models.Model) -> list[str]:
+    """
+    Why deleting `instance` would be refused, without deleting anything: the instance is a row of a locked
+    or deployed release, or the delete would cascade into rows (or links) of one. Empty if it can be deleted.
+    Only the instance itself is checked against the cascade guards — callers checking a whole cascade
+    (e.g. the admin's delete confirmation) pass every collected object.
+    """
+    messages = []
+    if isinstance(instance, VersionedModel) and (locked := _locked_versions([instance.release_id])):
+        messages.append(_locked_message(locked, "delete"))
+    for guard in _cascade_guards.get(type(instance), {}).values():
+        try:
+            guard(sender=type(instance), instance=instance)
+        except ValidationError as exc:
+            messages.extend(exc.messages)
+    return messages
+
+
 def connect_cascade_guards(versioned_models: Iterable[type[models.Model]]) -> None:
     """
     Register the lock guards that Django's own machinery would otherwise bypass. Called from AppConfig.ready().
@@ -480,14 +603,25 @@ def connect_cascade_guards(versioned_models: Iterable[type[models.Model]]) -> No
     - pre_delete on every model the through table of a versioned many-to-many field points to
       (cascades into the links of locked rows).
     - m2m_changed on every such through table (add / remove / clear / set on locked rows).
+    - pre_save on Release and every versioned model, for raw saves (fixture loading).
     """
+    from django_versioned_models.models import Release  # pylint: disable=C0415
+
+    pre_save.connect(_raw_save_guard, sender=Release, weak=False, dispatch_uid="versioned_raw_guard:release")
     for model in versioned_models:
+        pre_save.connect(
+            _raw_save_guard,
+            sender=model,
+            weak=False,
+            dispatch_uid=f"versioned_raw_guard:{model._meta.label}",  # pylint: disable=W0212
+        )
         for field in _cascading_fields(model):
+            uid = f"versioned_cascade_guard:{model._meta.label}.{field.name}"  # pylint: disable=W0212
             pre_delete.connect(
-                _make_cascade_guard(model, field),
+                _register_guard(field.related_model, uid, _make_cascade_guard(model, field)),
                 sender=field.related_model,
                 weak=False,
-                dispatch_uid=f"versioned_cascade_guard:{model._meta.label}.{field.name}",  # pylint: disable=W0212
+                dispatch_uid=uid,
             )
         for m2m_field in _plain_m2m_fields(model):
             through = m2m_field.remote_field.through
@@ -495,11 +629,16 @@ def connect_cascade_guards(versioned_models: Iterable[type[models.Model]]) -> No
             uid = f"{model._meta.label}.{m2m_field.name}"  # pylint: disable=W0212
             for through_fk in _cascading_fields(through):
                 if through_fk.name != source_fk:
+                    guard_uid = f"versioned_m2m_cascade_guard:{uid}.{through_fk.name}"
                     pre_delete.connect(
-                        _make_cascade_guard(through, through_fk, release_prefix=f"{source_fk}__"),
+                        _register_guard(
+                            through_fk.related_model,
+                            guard_uid,
+                            _make_cascade_guard(through, through_fk, release_prefix=f"{source_fk}__"),
+                        ),
                         sender=through_fk.related_model,
                         weak=False,
-                        dispatch_uid=f"versioned_m2m_cascade_guard:{uid}.{through_fk.name}",
+                        dispatch_uid=guard_uid,
                     )
             m2m_changed.connect(
                 _make_m2m_guard(m2m_field), sender=through, weak=False, dispatch_uid=f"versioned_m2m_guard:{uid}"

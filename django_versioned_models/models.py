@@ -105,17 +105,24 @@ class Release(models.Model):
         Compares against the stored row, not this instance, so a stale instance can't bypass the guard.
         With update_fields, only the fields actually being written are checked.
         """
-        if not self._state.adding and self.pk is not None:
-            fields = set(DEPLOYED_FROZEN_FIELDS)
-            if (update_fields := kwargs.get("update_fields")) is not None:
-                fields &= set(update_fields)
-            stored = type(self)._base_manager.filter(pk=self.pk, deployed=True).values(*DEPLOYED_FROZEN_FIELDS).first()
-            if stored and (changed := sorted(f for f in fields if getattr(self, f) != stored[f])):
-                raise ValidationError(
-                    f'Release "{stored["version"]}" is deployed — cannot change {", ".join(changed)}. '
-                    f"Create a patch release instead."
-                )
+        if not self._state.adding and (message := self.deployed_change_error(kwargs.get("update_fields"))):
+            raise ValidationError(message)
         super().save(*args, **kwargs)
+
+    def deployed_change_error(self, update_fields: Any = None) -> str | None:
+        """Why saving this instance would change a frozen field of a deployed release (read from the DB), if so."""
+        if self.pk is None:
+            return None
+        fields = set(DEPLOYED_FROZEN_FIELDS)
+        if update_fields is not None:
+            fields &= set(update_fields)
+        stored = type(self)._base_manager.filter(pk=self.pk, deployed=True).values(*DEPLOYED_FROZEN_FIELDS).first()
+        if stored and (changed := sorted(f for f in fields if getattr(self, f) != stored[f])):
+            return (
+                f'Release "{stored["version"]}" is deployed — cannot change {", ".join(changed)}. '
+                f"Create a patch release instead."
+            )
+        return None
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
         """Refuse to delete a deployed release (read from the DB — a stale instance can't bypass it)."""
