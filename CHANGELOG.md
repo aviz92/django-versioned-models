@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [4.1.0] - 2026-11-18
 
 ### Changed
 - **Breaking:** releases are now fully isolated. A versioned row may only point to rows of its own release — a FK / one-to-one or many-to-many link to a versioned row of another release raises `ValidationError` on `save()`, `create()`, `QuerySet.update()`, `bulk_create()`, `bulk_update()` and many-to-many `add()` / `set()`. Previously such references were allowed, so an unlocked row in one release could change what a locked row in another release referred to. References to non-versioned models are not checked.
