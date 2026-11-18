@@ -28,7 +28,7 @@ from typing import Any
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
-from django.db.models.signals import pre_delete
+from django.db.models.signals import m2m_changed, pre_delete
 
 _FROZEN_RELEASE_Q = Q(release__is_locked=True) | Q(release__deployed=True)
 
@@ -296,14 +296,25 @@ def _cascading_fields(model: type[models.Model]) -> Iterator[models.ForeignKey]:
                 yield field
 
 
-def _make_cascade_guard(model: type[models.Model], field: models.ForeignKey) -> Any:
+def _frozen_release_q(prefix: str = "") -> Q:
+    """Rows whose release (reached through `prefix`, e.g. "part__") is locked or deployed."""
+    return Q(**{f"{prefix}release__is_locked": True}) | Q(**{f"{prefix}release__deployed": True})
+
+
+def _make_cascade_guard(model: type[models.Model], field: models.ForeignKey, release_prefix: str = "") -> Any:
+    """
+    pre_delete guard for the model `field` points to. `model` holds the affected rows; `release_prefix`
+    is the path from those rows to the versioned row that owns them ("" for a versioned model itself,
+    "<fk>__" for the through model of a many-to-many field).
+    """
+
     def guard(sender: type[models.Model], instance: models.Model, **kwargs: Any) -> None:  # pylint: disable=W0613
         target = instance.pk if field.target_field.primary_key else getattr(instance, field.target_field.attname)
         base_manager = model._base_manager  # pylint: disable=W0212
-        frozen = base_manager.filter(**{field.attname: target}).filter(_FROZEN_RELEASE_Q)
+        frozen = base_manager.filter(**{field.attname: target}).filter(_frozen_release_q(release_prefix))
         if (deleting := _release_being_deleted.get()) is not None:
-            frozen = frozen.exclude(release_id=deleting)
-        if locked := sorted(set(frozen.values_list("release__version", flat=True))):
+            frozen = frozen.exclude(**{f"{release_prefix}release_id": deleting})
+        if locked := sorted(set(frozen.values_list(f"{release_prefix}release__version", flat=True))):
             raise ValidationError(
                 f"Cannot delete {sender._meta.label} {instance.pk}: {model._meta.label} rows of locked "  # pylint: disable=W0212
                 f"release {', '.join(locked)} point to it ({field.name}, "
@@ -313,8 +324,59 @@ def _make_cascade_guard(model: type[models.Model], field: models.ForeignKey) -> 
     return guard
 
 
+def _plain_m2m_fields(model: type[models.Model]) -> Iterator[models.ManyToManyField]:
+    """Many-to-many fields of a versioned model whose through model is not itself versioned."""
+    for field in model._meta.local_many_to_many:  # pylint: disable=W0212
+        if not issubclass(field.remote_field.through, VersionedModel):
+            yield field
+
+
+def _frozen_versions(model: type[models.Model], pks: Iterable[Any]) -> set[str]:
+    if not issubclass(model, VersionedModel) or not (pks := list(pks)):
+        return set()
+    base_manager = model._base_manager  # pylint: disable=W0212
+    return set(base_manager.filter(pk__in=pks).filter(_FROZEN_RELEASE_Q).values_list("release__version", flat=True))
+
+
+def _make_m2m_guard(field: models.ManyToManyField) -> Any:
+    """m2m_changed guard: refuse add / remove / clear / set on links of a locked or deployed row."""
+    through = field.remote_field.through
+    source_fk, target_fk = field.m2m_field_name(), field.m2m_reverse_field_name()
+
+    # pylint: disable=W0613,R0913
+    def guard(
+        sender: type[models.Model],
+        instance: models.Model,
+        action: str,
+        reverse: bool,
+        model: type[models.Model],
+        pk_set: set[Any] | None,
+        **kwargs: Any,
+    ) -> None:
+        if action not in ("pre_add", "pre_remove", "pre_clear"):
+            return
+        own_fk, other_fk = (target_fk, source_fk) if reverse else (source_fk, target_fk)
+        if pk_set is None:  # clear — every currently linked row is affected
+            linked = through._base_manager.filter(**{own_fk: instance.pk})  # pylint: disable=W0212
+            pk_set = set(linked.values_list(f"{other_fk}_id", flat=True))
+        if locked := sorted(_frozen_versions(type(instance), [instance.pk]) | _frozen_versions(model, pk_set)):
+            raise ValidationError(
+                f"Cannot {action.removeprefix('pre_')} {field.model.__name__}.{field.name} links: "
+                f"release {', '.join(locked)} is locked. Create a new release (patch) instead."
+            )
+
+    return guard
+
+
 def connect_cascade_guards(versioned_models: Iterable[type[models.Model]]) -> None:
-    """Register the cascade guard for every FK of every versioned model. Called from AppConfig.ready()."""
+    """
+    Register the lock guards that Django's own machinery would otherwise bypass. Called from AppConfig.ready().
+
+    - pre_delete on every model a versioned row's FK points to (cascades into locked rows).
+    - pre_delete on every model the through table of a versioned many-to-many field points to
+      (cascades into the links of locked rows).
+    - m2m_changed on every such through table (add / remove / clear / set on locked rows).
+    """
     for model in versioned_models:
         for field in _cascading_fields(model):
             pre_delete.connect(
@@ -322,4 +384,19 @@ def connect_cascade_guards(versioned_models: Iterable[type[models.Model]]) -> No
                 sender=field.related_model,
                 weak=False,
                 dispatch_uid=f"versioned_cascade_guard:{model._meta.label}.{field.name}",  # pylint: disable=W0212
+            )
+        for m2m_field in _plain_m2m_fields(model):
+            through = m2m_field.remote_field.through
+            source_fk = m2m_field.m2m_field_name()
+            uid = f"{model._meta.label}.{m2m_field.name}"  # pylint: disable=W0212
+            for through_fk in _cascading_fields(through):
+                if through_fk.name != source_fk:
+                    pre_delete.connect(
+                        _make_cascade_guard(through, through_fk, release_prefix=f"{source_fk}__"),
+                        sender=through_fk.related_model,
+                        weak=False,
+                        dispatch_uid=f"versioned_m2m_cascade_guard:{uid}.{through_fk.name}",
+                    )
+            m2m_changed.connect(
+                _make_m2m_guard(m2m_field), sender=through, weak=False, dispatch_uid=f"versioned_m2m_guard:{uid}"
             )

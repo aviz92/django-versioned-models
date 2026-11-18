@@ -2,9 +2,11 @@
 Core services — create_release, lock_release, rename_release, delete_release, and auto-discovery.
 """
 
+from typing import Any
+
 from django.apps import apps
 from django.db import transaction
-from django.db.models import Model, ProtectedError, RestrictedError
+from django.db.models import ManyToManyField, Model, ProtectedError, RestrictedError
 
 from django_versioned_models.mixins import VersionedModel, allow_release_deletion
 from django_versioned_models.models import Release
@@ -82,10 +84,57 @@ def create_release(version: str, based_on_version: str, description: str = "", u
     )
 
     id_mapping = {}
-    for model in get_versioned_models_ordered():
+    ordered = get_versioned_models_ordered()
+    for model in ordered:
         _copy_model_rows(model, source_release, new_release, id_mapping)
+    # Links last — every versioned row on both ends of a link must already have its copy.
+    for model in ordered:
+        _copy_m2m_links(model, source_release, id_mapping)
 
     return new_release
+
+
+def _model_key(model: type[Model]) -> str:
+    return f"{model._meta.app_label}.{model.__name__}"  # pylint: disable=W0212
+
+
+def _copy_m2m_links(model: type[VersionedModel], source_release: Release, id_mapping: dict) -> None:
+    """
+    Copy the many-to-many links of a model's rows from source_release to the new release.
+
+    Each link row is duplicated with both ends remapped: a versioned end points to its copy in the
+    new release, a non-versioned end stays as-is. Extra fields of a custom through model are kept.
+    A versioned through model is skipped — its rows were already copied like any versioned model.
+
+    Raises:
+        ValueError: if a link points to a versioned row outside the source release (it has no copy).
+    """
+    for field in model._meta.local_many_to_many:  # pylint: disable=W0212
+        through = field.remote_field.through
+        if issubclass(through, VersionedModel):
+            continue
+        source_fk = field.m2m_field_name()
+        links = through._base_manager.filter(**{f"{source_fk}__release": source_release})  # pylint: disable=W0212
+        new_links = [through(**_remapped_values(through, link, id_mapping, field)) for link in links]
+        through._base_manager.bulk_create(new_links)  # pylint: disable=W0212
+
+
+def _remapped_values(through: type[Model], link: Model, id_mapping: dict, field: ManyToManyField) -> dict[str, Any]:
+    values = {}
+    for through_field in through._meta.concrete_fields:  # pylint: disable=W0212
+        if through_field.primary_key:
+            continue
+        value = getattr(link, through_field.attname)
+        if through_field.is_relation and value is not None:
+            if (mapping := id_mapping.get(_model_key(through_field.related_model))) is not None:
+                if (new_row := mapping.get(value)) is None:
+                    raise ValueError(
+                        f"Cannot copy {field.model.__name__}.{field.name}: it links to "
+                        f"{through_field.related_model.__name__} {value}, which is not in the source release."
+                    )
+                value = new_row.pk
+        values[through_field.attname] = value
+    return values
 
 
 def _copy_model_rows(
@@ -105,6 +154,8 @@ def _copy_model_rows(
         field_values = {}
 
         for field in model._meta.get_fields():  # pylint: disable=W0212
+            if field.many_to_many:
+                continue  # copied by _copy_m2m_links once all rows exist
             if not hasattr(field, "column"):
                 continue
             if field.primary_key:
@@ -123,7 +174,9 @@ def _copy_model_rows(
                         field_values[f"{field.name}_id"] = None
                     continue
 
-            field_values[field.name] = getattr(row, field.attname)
+            field_values[field.attname] = getattr(
+                row, field.attname
+            )  # attname: FK to a non-versioned model keeps its id
 
         new_row = model.objects.create(**field_values, release=new_release)
         id_mapping[model_key][old_id] = new_row

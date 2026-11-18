@@ -2,7 +2,7 @@ import pytest
 
 from django_versioned_models.mixins import DataStatus
 from django_versioned_models.models import Release
-from tests.testapp.models import Category, Product, Supplier
+from tests.testapp.models import Category, Part, Product, Supplier, Tag
 
 
 @pytest.fixture
@@ -26,6 +26,13 @@ def deployed_release(locked_release: Release) -> Release:  # pylint: disable=W06
 @pytest.fixture
 def supplier(db: None) -> Supplier:  # pylint: disable=W0621
     return Supplier.objects.create(name="Acme")
+
+
+@pytest.fixture
+def tagged_part(release: Release) -> Part:  # pylint: disable=W0621
+    part = Part.objects.create(name="Bolt", release=release)
+    part.tags.add(Tag.objects.create(name="Steel", release=release), Tag.objects.create(name="M6", release=release))
+    return part
 
 
 @pytest.fixture
