@@ -10,7 +10,7 @@ from itertools import batched
 from typing import Any
 
 from django.apps import apps
-from django.db import connections, router, transaction
+from django.db import IntegrityError, connections, router, transaction
 from django.db.models import ManyToManyField, Model, ProtectedError, RestrictedError
 
 from django_versioned_models.mixins import DataStatus, VersionedModel, allow_release_deletion, building_release
@@ -76,12 +76,22 @@ def get_versioned_models_ordered() -> list[type[VersionedModel]]:
 
 
 @transaction.atomic
-def create_release(version: str, based_on_version: str, description: str = "", user_id: int | None = None) -> Release:
+def create_release(
+    version: str, based_on_version: str | None = None, description: str = "", user_id: int | None = None
+) -> Release:
     """
-    Create a new release branched from an existing locked one.
-    Copies all versioned rows automatically, including inactive ones —
+    Create a new release — standalone (empty, unlocked) or branched from an existing locked one.
+    A branch copies all versioned rows automatically, including inactive ones —
     so architects can reactivate them in the new release if needed.
+
+    Raises:
+        ValueError: if the version is empty, too long or already taken, or the source release does not
+            exist or is not locked.
     """
+    version = _clean_new_version(version, "Release version")
+    if based_on_version is None:
+        return _create_release_row(version=version, description=description, is_locked=False, created_by_id=user_id)
+
     try:
         source_release = Release.objects.get(version=based_on_version)
     except Release.DoesNotExist as exc:
@@ -92,7 +102,7 @@ def create_release(version: str, based_on_version: str, description: str = "", u
             f'Source release "{based_on_version}" is not locked yet. ' f"You can only branch from a locked release."
         )
 
-    new_release = Release.objects.create(
+    new_release = _create_release_row(
         version=version,
         description=description,
         based_on=source_release,
@@ -121,6 +131,33 @@ def _can_bulk_copy(model: type[Model]) -> bool:
     if not getattr(model, "copy_with_bulk_create", True) or model._meta.parents:  # pylint: disable=W0212
         return False
     return connections[router.db_for_write(model)].features.can_return_rows_from_bulk_insert
+
+
+def _clean_new_version(version: str, label: str) -> str:
+    """Strip a new version name and check it is non-empty, fits the column and is not taken."""
+    if not (version := version.strip()):
+        raise ValueError(f"{label} must not be empty.")
+    if len(version) > (max_length := Release._meta.get_field("version").max_length):  # pylint: disable=W0212
+        raise ValueError(f"{label} must be at most {max_length} characters.")
+    if Release.objects.filter(version=version).exists():
+        raise ValueError(f'Release "{version}" already exists.')
+    return version
+
+
+def _create_release_row(**fields: Any) -> Release:
+    """Insert a Release; a concurrent insert of the same version becomes a clear ValueError, not an IntegrityError."""
+    try:
+        with transaction.atomic():
+            return Release.objects.create(**fields)
+    except IntegrityError as exc:
+        _raise_if_version_taken(fields["version"], exc)
+        raise
+
+
+def _raise_if_version_taken(version: str, exc: IntegrityError) -> None:
+    """Turn a lost race for a version name into a clear ValueError; any other IntegrityError is left alone."""
+    if Release.objects.filter(version=version).exists():
+        raise ValueError(f'Release "{version}" already exists.') from exc
 
 
 def _model_key(model: type[Model]) -> str:
@@ -402,13 +439,11 @@ def rename_release(version: str, new_version: str) -> Release:
 
     Raises:
         ValueError: if the new name is empty, too long or taken, the release does not exist, or it is deployed.
+        IntegrityError: re-raised as is for any database integrity failure other than a taken name.
     """
-    if not (new_version := new_version.strip()):
-        raise ValueError("New release version must not be empty.")
-    if len(new_version) > (max_length := Release._meta.get_field("version").max_length):  # pylint: disable=W0212
-        raise ValueError(f"New release version must be at most {max_length} characters.")
-    if new_version == version:
+    if new_version.strip() == version:
         raise ValueError(f'Release is already named "{version}".')
+    new_version = _clean_new_version(new_version, "New release version")
 
     try:
         release = Release.objects.get(version=version)
@@ -417,11 +452,14 @@ def rename_release(version: str, new_version: str) -> Release:
 
     if release.deployed:
         raise ValueError(f'Release "{version}" has been deployed and cannot be renamed.')
-    if Release.objects.filter(version=new_version).exists():
-        raise ValueError(f'Release "{new_version}" already exists.')
 
     release.version = new_version
-    release.save(update_fields=["version"])
+    try:
+        with transaction.atomic():
+            release.save(update_fields=["version"])
+    except IntegrityError as exc:  # renamed concurrently to the same name
+        _raise_if_version_taken(new_version, exc)
+        raise
     return release
 
 

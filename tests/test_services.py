@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 from django.contrib.auth import get_user_model
 
+from django_versioned_models import services
 from django_versioned_models.mixins import DataStatus, VersionedModel
 from django_versioned_models.models import Release
 from django_versioned_models.services import (
@@ -393,3 +394,51 @@ class TestDeprecateReleaseService:
     def test_deprecate_release_missing_release_raises(self, db: None) -> None:
         with pytest.raises(ValueError, match="does not exist"):
             deprecate_release("ghost")
+
+
+@pytest.mark.django_db
+class TestCreateReleaseValidation:
+    def test_create_release_standalone_creates_unlocked_release(self, db: None) -> None:
+        release = create_release("v9.0.0")
+        assert (release.is_locked, release.based_on) == (False, None), "Standalone release must be empty and unlocked"
+
+    def test_create_release_strips_whitespace(self, db: None) -> None:
+        assert create_release("  v9.0.0  ").version == "v9.0.0", "Version must be stripped"
+
+    @pytest.mark.parametrize("version", ["", "   "])
+    def test_create_release_empty_name_raises(self, db: None, version: str) -> None:
+        with pytest.raises(ValueError, match="must not be empty"):
+            create_release(version)
+        assert not Release.objects.exists(), "Nothing must be created"
+
+    def test_create_release_too_long_name_raises(self, db: None) -> None:
+        with pytest.raises(ValueError, match="at most 50 characters"):
+            create_release("x" * 51)
+
+    def test_create_release_existing_name_standalone_raises(self, release: Release) -> None:
+        with pytest.raises(ValueError, match="already exists"):
+            create_release(release.version)
+
+    def test_create_release_existing_name_branch_raises_and_copies_nothing(
+        self, release: Release, locked_release_with_data: Release
+    ) -> None:
+        rows_before = Category.objects.count()
+        with pytest.raises(ValueError, match="already exists"):
+            create_release(release.version, locked_release_with_data.version)
+        assert Category.objects.count() == rows_before, "A refused branch must not copy rows"
+
+    def test_create_release_concurrent_duplicate_insert_raises_value_error(
+        self, locked_release_with_data: Release, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Simulate losing the race: the name was free at check time, taken by the time of the insert.
+        monkeypatch.setattr(services, "_clean_new_version", lambda version, label: version)
+        Release.objects.create(version="v-race")
+        with pytest.raises(ValueError, match="already exists"):
+            create_release("v-race", locked_release_with_data.version)
+
+    def test_rename_release_concurrent_duplicate_raises_value_error(
+        self, release: Release, locked_release: Release, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(services, "_clean_new_version", lambda version, label: version)
+        with pytest.raises(ValueError, match="already exists"):
+            rename_release(release.version, locked_release.version)
