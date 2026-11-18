@@ -43,6 +43,9 @@ This document provides a list of common Django management commands that can be u
 - `uv run python manage.py delete_release --release-version v1.1.0 --dry-run`: Shows how many objects per model would be deleted, without deleting anything.
 - `uv run python manage.py delete_release --release-version v1.1.0 --force`: Deletes without the confirmation prompt (for CI/automation).
 
+#### check_release_isolation:
+- `uv run python manage.py check_release_isolation`: Read-only scan for references that cross releases (a row pointing to a versioned row of another release). Lists each offending field with example row ids and exits with an error if any are found — run it after upgrading or in CI.
+
 #### approve_release:
 - `uv run python manage.py approve_release --release-version v1.1.0`: Approves the specified release version, indicating that it has passed all necessary checks and is ready for deployment.
 - `uv run python manage.py approve_release --release-version v1.1.0 --only-future`: Approves the specified release version, but only if it is a future release (i.e., its version number is greater than the current version). This can be used to ensure that only upcoming releases are approved, while past releases remain unaffected.

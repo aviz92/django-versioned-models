@@ -200,6 +200,19 @@ Like an integrity error, this is raised inside the delete's transaction — insi
 
 The one deliberate exception is `delete_release`: it removes a non-deployed release (locked or not) together with all its rows.
 
+#### Release isolation
+
+Releases are fully isolated: a versioned row may only point to rows of its own release. Otherwise an unlocked row in one release could change what a locked row in another release refers to. Every write that would create such a reference raises `ValidationError` — `save()`, `create()`, `QuerySet.update()`, `bulk_create()`, `bulk_update()` and many-to-many `add()` / `set()`:
+
+```python
+part.parent = part_from_another_release
+part.save()                                   # raises
+part.tags.add(tag_from_another_release)       # raises
+row.release = other_release; row.save()       # raises — rows can't move between releases
+```
+
+References to non-versioned models (shared by all releases, such as users) are not checked. A database written by an earlier version may already hold references that cross releases — find them with `python manage.py check_release_isolation`. Such a row can still be saved with `update_fields` that leave the bad reference out, and its release can't be branched until the reference is fixed.
+
 #### Deployed releases
 
 A deployed release is guarded on the `Release` model itself, not only by the management commands:
@@ -231,6 +244,7 @@ A database constraint (`release_deployed_requires_locked`) also guarantees a dep
 | `delete_release --release-version v1.1.0` | Permanently delete a release and all its rows, with interactive confirmation (blocked for deployed releases; branches of it are kept but lose their `based_on`, with a warning) |
 | `delete_release --release-version v1.1.0 --dry-run` | Show what would be deleted, without deleting |
 | `delete_release --release-version v1.1.0 --force` | Delete without prompt — for CI/automation |
+| `check_release_isolation` | Read-only scan for references that cross releases; exits with an error if any are found (CI-friendly) |
 | `deprecate_release --release-version v1.0.0` | Soft-deprecate (data preserved, hidden by default) |
 | `deprecate_release --release-version v1.0.0 --undo` | Restore a deprecated release |
 
@@ -287,6 +301,7 @@ from django_versioned_models.services import (
     deprecate_release,
     rename_release,
     delete_release,
+    find_cross_release_references,
     get_versioned_models,
     get_versioned_models_ordered,
 )

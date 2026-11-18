@@ -11,9 +11,15 @@ from typing import Any
 
 from django.apps import apps
 from django.db import IntegrityError, connections, router, transaction
-from django.db.models import ManyToManyField, Model, ProtectedError, RestrictedError
+from django.db.models import F, ManyToManyField, Model, ProtectedError, RestrictedError
 
-from django_versioned_models.mixins import DataStatus, VersionedModel, allow_release_deletion, building_release
+from django_versioned_models.mixins import (
+    DataStatus,
+    VersionedModel,
+    _versioned_fks,
+    allow_release_deletion,
+    building_release,
+)
 from django_versioned_models.models import Release
 
 # Rows per INSERT when branching a release.
@@ -544,3 +550,42 @@ def _delete_release(version: str) -> dict[str, int]:
 def _merge_counts(total: dict[str, int], counts: dict[str, int]) -> None:
     for label, count in counts.items():
         total[label] = total.get(label, 0) + count
+
+
+def find_cross_release_references() -> dict[str, list[Any]]:
+    """
+    Find references that cross releases — rows pointing to a versioned row of another release.
+
+    Such writes are refused now, but a database written by an earlier version may still hold some.
+    Such rows can't be saved as a whole and their release can't be branched until they are fixed.
+
+    Returns:
+        Offending rows per "<app>.<Model>.<field>": the primary keys of the rows holding a bad FK /
+        one-to-one, or (source pk, target pk) pairs for many-to-many links. Empty if all releases are isolated.
+    """
+    found: dict[str, list[Any]] = {}
+    for model in get_versioned_models():
+        label = model._meta.label  # pylint: disable=W0212
+        for field in _versioned_fks(model):
+            bad = (
+                model._base_manager.filter(**{f"{field.name}__isnull": False})  # pylint: disable=W0212
+                .exclude(**{f"{field.name}__release": F("release")})
+                .order_by("pk")
+                .values_list("pk", flat=True)
+            )
+            if bad := list(bad):
+                found[f"{label}.{field.name}"] = bad
+        for field in model._meta.local_many_to_many:  # pylint: disable=W0212
+            through = field.remote_field.through
+            if issubclass(through, VersionedModel) or not issubclass(field.related_model, VersionedModel):
+                continue
+            source, target = field.m2m_field_name(), field.m2m_reverse_field_name()
+            through_manager = through._base_manager  # pylint: disable=W0212
+            links = (
+                through_manager.exclude(**{f"{source}__release": F(f"{target}__release")})
+                .order_by(f"{source}_id", f"{target}_id")
+                .values_list(f"{source}_id", f"{target}_id")
+            )
+            if links := list(links):
+                found[f"{label}.{field.name}"] = links
+    return found

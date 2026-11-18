@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **Breaking:** releases are now fully isolated. A versioned row may only point to rows of its own release — a FK / one-to-one or many-to-many link to a versioned row of another release raises `ValidationError` on `save()`, `create()`, `QuerySet.update()`, `bulk_create()`, `bulk_update()` and many-to-many `add()` / `set()`. Previously such references were allowed, so an unlocked row in one release could change what a locked row in another release referred to. References to non-versioned models are not checked.
+- **Breaking:** rows can no longer move between releases (changing `release` on an existing row raises `ValidationError`) — the references to and from a moved row would cross releases.
+
+### Added
+- `check_release_isolation` management command and `find_cross_release_references()` service — a read-only scan for references that cross releases, left over from before 4.0.0. The command exits with an error when it finds any, so it can gate CI.
+
+### Migration
+Run `python manage.py check_release_isolation` after upgrading. If it reports references that cross releases, point each one to the row of its own release (or clear it) — until then those rows can only be saved with `update_fields` that leave the bad reference out, and their release can't be branched.
+
+---
+
 ## [4.0.0] - 2026-11-18
 
 ### Changed

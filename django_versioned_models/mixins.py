@@ -65,8 +65,61 @@ def _release_id_from_kwargs(kwargs: dict[str, Any]) -> int | None:
     return getattr(release, "pk", release)
 
 
+def _versioned_fks(model: type[models.Model]) -> list[Any]:
+    """Concrete FK / one-to-one fields of a model that point to a versioned model (the release FK excluded)."""
+    return [
+        f
+        for f in model._meta.concrete_fields  # pylint: disable=W0212
+        if f.is_relation
+        and (f.many_to_one or f.one_to_one)
+        and f.name != "release"
+        and issubclass(f.related_model, VersionedModel)
+    ]
+
+
+def _isolation_error(model: type[models.Model], field_name: str, target: type[models.Model], target_pk: Any) -> str:
+    return (
+        f"{model.__name__}.{field_name} must point to a row in the same release, but "
+        f"{target.__name__} {target_pk} belongs to another release. Releases are isolated — "
+        f"point to the copy of that row in this release instead."
+    )
+
+
+def _raise_if_cross_release(objs: Sequence[models.Model], fields: Iterable[str] | None = None) -> None:
+    """
+    Raise ValidationError if any FK / one-to-one of `objs` points to a versioned row of another release.
+    `fields` limits the check to the fields being written (names or attnames); None checks them all.
+    """
+    if not objs:
+        return
+    model = type(objs[0])
+    if (building := _release_being_built.get()) is not None and all(o.release_id == building for o in objs):
+        return  # create_release remaps every reference into the release it is building
+    wanted_fields = None if fields is None else set(fields)
+    for field in _versioned_fks(model):
+        if wanted_fields is not None and not {field.name, field.attname} & wanted_fields:
+            continue
+        pairs = {(getattr(o, field.attname), o.release_id) for o in objs if getattr(o, field.attname) is not None}
+        if not pairs:
+            continue
+        base_manager = field.related_model._base_manager  # pylint: disable=W0212
+        target_release = dict(base_manager.filter(pk__in={t for t, _ in pairs}).values_list("pk", "release_id"))
+        for target_pk, release_id in sorted(pairs, key=str):
+            if target_pk in target_release and target_release[target_pk] != release_id:
+                raise ValidationError(_isolation_error(model, field.name, field.related_model, target_pk))
+
+
+_MOVE_ERROR = (
+    "Rows cannot move between releases — references to and from them would cross releases. "
+    "Create the row in the target release instead."
+)
+
+
 class VersionedQuerySet(models.QuerySet):
-    """QuerySet that refuses bulk writes touching rows of a locked or deployed release."""
+    """
+    QuerySet that refuses bulk writes touching rows of a locked or deployed release, writes that would
+    point a row at another release, and moving rows between releases.
+    """
 
     def for_release(self, release: models.Model) -> "VersionedQuerySet":
         """
@@ -95,7 +148,23 @@ class VersionedQuerySet(models.QuerySet):
     def update(self, **kwargs: Any) -> int:
         self._raise_if_touches_locked_release("update")
         _raise_if_releases_locked([_release_id_from_kwargs(kwargs)], "update")
+        if ("release" in kwargs or "release_id" in kwargs) and self.exclude(
+            release_id=_release_id_from_kwargs(kwargs)
+        ).exists():
+            raise ValidationError(_MOVE_ERROR)
+        self._raise_if_update_crosses_releases(kwargs)
         return super().update(**kwargs)
+
+    def _raise_if_update_crosses_releases(self, kwargs: dict[str, Any]) -> None:
+        for field in _versioned_fks(self.model):
+            key = field.name if field.name in kwargs else field.attname if field.attname in kwargs else None
+            if key is None or (value := kwargs[key]) is None or hasattr(value, "resolve_expression"):
+                continue
+            target_pk = getattr(value, "pk", value)
+            base_manager = field.related_model._base_manager  # pylint: disable=W0212
+            target_release = base_manager.filter(pk=target_pk).values_list("release_id", flat=True).first()
+            if target_release is not None and self.exclude(release_id=target_release).exists():
+                raise ValidationError(_isolation_error(self.model, field.name, field.related_model, target_pk))
 
     def delete(self) -> tuple[int, dict[str, int]]:
         self._raise_if_touches_locked_release("delete")
@@ -104,6 +173,7 @@ class VersionedQuerySet(models.QuerySet):
     def bulk_create(self, objs: Iterable[models.Model], *args: Any, **kwargs: Any) -> list[models.Model]:
         objs = list(objs)
         _raise_if_releases_locked((obj.release_id for obj in objs), "bulk_create")
+        _raise_if_cross_release(objs)
         return super().bulk_create(objs, *args, **kwargs)
 
     def bulk_update(self, objs: Iterable[models.Model], fields: Sequence[str], *args: Any, **kwargs: Any) -> int:
@@ -115,6 +185,10 @@ class VersionedQuerySet(models.QuerySet):
                 "QuerySet bulk_update touches rows of a locked release. Create a new release (patch) instead."
             )
         _raise_if_releases_locked((obj.release_id for obj in objs), "bulk_update")
+        stored_release = dict(stored.values_list("pk", "release_id"))
+        if any(stored_release.get(obj.pk, obj.release_id) != obj.release_id for obj in objs):
+            raise ValidationError(_MOVE_ERROR)
+        _raise_if_cross_release(objs, fields)
         return super().bulk_update(objs, fields, *args, **kwargs)
 
 
@@ -245,7 +319,14 @@ class VersionedModel(models.Model):
         return release_ids
 
     def save(self, *args: Any, **kwargs: Any) -> None:
-        _raise_if_releases_locked(self._affected_release_ids(), "save")
+        stored_release = None
+        if not self._state.adding:
+            # pylint: disable=W0212
+            stored_release = type(self)._base_manager.filter(pk=self.pk).values_list("release_id", flat=True).first()
+        _raise_if_releases_locked({self.release_id, stored_release}, "save")
+        if stored_release is not None and stored_release != self.release_id:
+            raise ValidationError(_MOVE_ERROR)
+        _raise_if_cross_release([self], kwargs.get("update_fields"))
         super().save(*args, **kwargs)
 
     def delete(self, *args: Any, **kwargs: Any) -> tuple[int, dict[str, int]]:
@@ -373,6 +454,11 @@ def _make_m2m_guard(field: models.ManyToManyField) -> Any:
     ) -> None:
         if action not in ("pre_add", "pre_remove", "pre_clear"):
             return
+        if action == "pre_add" and isinstance(instance, VersionedModel) and issubclass(model, VersionedModel):
+            base_manager = model._base_manager  # pylint: disable=W0212
+            other = base_manager.filter(pk__in=pk_set).exclude(release_id=instance.release_id)
+            if (stray := other.values_list("pk", flat=True).first()) is not None:
+                raise ValidationError(_isolation_error(type(instance), field.name, model, stray))
         own_fk, other_fk = (target_fk, source_fk) if reverse else (source_fk, target_fk)
         if pk_set is None:  # clear — every currently linked row is affected
             linked = through._base_manager.filter(**{own_fk: instance.pk})  # pylint: disable=W0212

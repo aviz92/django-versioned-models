@@ -63,7 +63,10 @@ class TestSelfReferenceCopy:
 
     def test_self_reference_outside_source_release_raises(self, release: Release) -> None:
         other = Release.objects.create(version="v-other")
-        Part.objects.create(name="Child", release=release, parent=Part.objects.create(name="X", release=other))
+        child = Part.objects.create(name="Child", release=release)
+        # Legacy data from before isolation was enforced — written past the guards.
+        legacy_parent = Part.objects.create(name="X", release=other)
+        Part._base_manager.filter(pk=child.pk).update(parent=legacy_parent)  # pylint: disable=W0212
         release.lock()
         with pytest.raises(ValueError, match="not in the source release"):
             create_release("v2.0.0", release.version)
@@ -81,9 +84,10 @@ class TestSelfReferenceCopy:
 class TestForeignKeyCopy:
     def test_fk_to_versioned_row_outside_source_release_raises(self, release: Release) -> None:
         other = Release.objects.create(version="v-other")
-        Product.objects.create(
-            name="Laptop", release=release, category=Category.objects.create(name="X", release=other)
-        )
+        laptop = Product.objects.create(name="Laptop", release=release)
+        # Legacy data from before isolation was enforced — written past the guards.
+        legacy_category = Category.objects.create(name="X", release=other)
+        Product._base_manager.filter(pk=laptop.pk).update(category=legacy_category)  # pylint: disable=W0212
         release.lock()
         with pytest.raises(ValueError, match="category points to Category"):
             create_release("v2.0.0", release.version)

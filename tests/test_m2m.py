@@ -54,7 +54,8 @@ class TestCreateReleaseCopiesManyToMany:
     def test_create_release_link_outside_source_release_raises(self, release: Release) -> None:
         other = Release.objects.create(version="v-other")
         part = Part.objects.create(name="Bolt", release=release)
-        part.tags.add(Tag.objects.create(name="Foreign", release=other))
+        # Legacy data from before isolation was enforced — written past the guards.
+        Part.tags.through.objects.create(part=part, tag=Tag.objects.create(name="Foreign", release=other))
         release.lock()
         with pytest.raises(ValueError, match="not in the source release"):
             create_release("v2.0.0", release.version)

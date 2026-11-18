@@ -36,6 +36,11 @@ def tagged_part(release: Release) -> Part:  # pylint: disable=W0621
 
 
 @pytest.fixture
+def other_release(db: None) -> Release:  # pylint: disable=W0621
+    return Release.objects.create(version="v-other")
+
+
+@pytest.fixture
 def category(release: Release) -> Category:  # pylint: disable=W0621
     return Category.objects.create(name="Electronics", release=release)
 
