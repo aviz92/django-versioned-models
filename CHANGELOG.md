@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [4.2.0] - 2026-11-18
+
+### Changed
+- **Breaking:** fixture loading (`loaddata`) now goes through the release rules. It saves rows "raw", past `save()`, so it could overwrite rows of a locked release, insert rows into one, move rows between releases, create references across releases and change a deployed release — all of these are now refused. Loading into unlocked releases is unchanged. Restore a full dump that contains locked releases with the new `restore_releases` command instead.
+
+### Added
+- `restore_releases` management command — restores a full dump that contains locked or deployed releases, then verifies that no reference crosses releases (rolled back if one does). `mixins.allow_raw_load()` is the context manager behind it.
+- Release rules are validated before saving: `VersionedModel.clean()` reports a locked or deployed release, a row moved to another release, and FK / one-to-one references into another release. Any `ModelForm` (including the admin) shows them as form errors — on the offending field, or form-wide when that field isn't on the form — instead of failing on save. `release_errors()` returns the same checks as a dict without raising.
+- `django_versioned_models.admin.VersionedModelAdmin` — rows of a locked or deployed release are read-only (no save, no delete); FK and many-to-many choices only list rows of the edited row's release; many-to-many selections are validated; a delete that would cascade into rows of a locked release is refused on the confirmation page (delete view and "delete selected" action). Previously each of these ended in a server error.
+- `django_versioned_models.admin.VersionedModelForm` — a `ModelForm` that also validates many-to-many selections against the row's release.
+- `mixins.delete_errors(instance)` — why deleting an object would be refused, without deleting anything.
+
+---
+
 ## [4.1.0] - 2026-11-18
 
 ### Changed

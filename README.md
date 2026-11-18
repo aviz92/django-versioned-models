@@ -229,6 +229,41 @@ A database constraint (`release_deployed_requires_locked`) also guarantees a dep
 
 ---
 
+## 🖥 Admin and Forms
+
+The rules above are also checked before anything is written, so forms show them as errors instead of failing on save:
+
+- **Any `ModelForm`** — `VersionedModel.clean()` reports a locked or deployed release, a row moved to another release, and FK / one-to-one references into another release. Errors are attached to the offending field, or to the whole form when that field isn't on it. If you override `clean()`, call `super().clean()`.
+- **The Django admin** — use `VersionedModelAdmin`:
+
+```python
+from django.contrib import admin
+from django_versioned_models.admin import VersionedModelAdmin
+
+@admin.register(Product)
+class ProductAdmin(VersionedModelAdmin):
+    list_display = ["name", "release", "status"]
+```
+
+It makes rows of a locked or deployed release read-only (no save, no delete), lists only rows of the edited row's release in FK and many-to-many choices, checks many-to-many selections against the row's release, and refuses — on the confirmation page — a delete that would cascade into rows of a locked release, for the delete view and the "delete selected" action alike. Use it for non-versioned models that versioned rows point to as well, so deleting them from the admin is checked too. For your own forms with many-to-many fields, subclass `VersionedModelForm`.
+
+---
+
+## 💾 Fixtures, Backup and Restore
+
+`loaddata` saves rows "raw", past `save()` — so the library checks raw saves separately. Loading a fixture is refused when it would write rows of a locked or deployed release, move a row to another release, point a row into another release, or change a deployed release. Loading into unlocked releases works as usual.
+
+To restore a full dump that contains locked or deployed releases, use `restore_releases` instead of `loaddata`. It loads with the lock check lifted, then verifies that no reference crosses releases; if one does, the whole load is rolled back:
+
+```bash
+python manage.py dumpdata django_versioned_models myapp > dump.json
+python manage.py restore_releases dump.json
+```
+
+Data migrations (`RunPython`) work on historical models without this library's code, so they are not checked — run `check_release_isolation` after one that touches versioned data.
+
+---
+
 ## 📋 Management Commands
 
 | Command | Description |
@@ -244,6 +279,7 @@ A database constraint (`release_deployed_requires_locked`) also guarantees a dep
 | `delete_release --release-version v1.1.0` | Permanently delete a release and all its rows, with interactive confirmation (blocked for deployed releases; branches of it are kept but lose their `based_on`, with a warning) |
 | `delete_release --release-version v1.1.0 --dry-run` | Show what would be deleted, without deleting |
 | `delete_release --release-version v1.1.0 --force` | Delete without prompt — for CI/automation |
+| `restore_releases dump.json` | Restore a full dump that contains locked or deployed releases (plain `loaddata` refuses it); rolled back if any reference crosses releases |
 | `check_release_isolation` | Read-only scan for references that cross releases; exits with an error if any are found (CI-friendly) |
 | `deprecate_release --release-version v1.0.0` | Soft-deprecate (data preserved, hidden by default) |
 | `deprecate_release --release-version v1.0.0 --undo` | Restore a deprecated release |
@@ -292,6 +328,7 @@ Product.objects.for_release(release).filter(status=DataStatus.FUTURE_DEPRECATION
 ```python
 from django_versioned_models.mixins import VersionedModel, DataStatus
 from django_versioned_models.models import Release
+from django_versioned_models.admin import VersionedModelAdmin, VersionedModelForm
 from django_versioned_models.services import (
     create_release,
     approve_release,
