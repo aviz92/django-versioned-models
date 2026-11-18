@@ -13,7 +13,7 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 
-from django_versioned_models.models import Release
+from django_versioned_models.services import deprecate_release
 
 
 class Command(BaseCommand):
@@ -29,21 +29,15 @@ class Command(BaseCommand):
 
     def handle(self, **kwargs: Any) -> None:
         version = kwargs["release_version"]
-
+        undo = kwargs["undo"]
         try:
-            release = Release.objects.get(version=version)
-        except Release.DoesNotExist as exc:
-            raise CommandError(f'Release "{version}" does not exist.') from exc
+            deprecate_release(version, undo=undo)
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
 
-        if kwargs["undo"]:
-            if not release.is_deprecated:
-                raise CommandError(f'Release "{version}" is not deprecated.')
-            release.undeprecate()
+        if undo:
             self.stdout.write(self.style.SUCCESS(f"✅ Release {version} is no longer deprecated."))
         else:
-            if release.is_deprecated:
-                raise CommandError(f'Release "{version}" is already deprecated.')
-            release.deprecate()
             self.stdout.write(
                 self.style.SUCCESS(
                     f"🗑️  Release {version} is now deprecated.\n"

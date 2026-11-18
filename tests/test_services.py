@@ -6,14 +6,18 @@ from django.contrib.auth import get_user_model
 from django_versioned_models.mixins import DataStatus, VersionedModel
 from django_versioned_models.models import Release
 from django_versioned_models.services import (
+    approve_release,
     count_release_rows,
     create_release,
     delete_release,
+    deploy_release,
+    deprecate_release,
     get_child_release_versions,
     get_versioned_models,
     get_versioned_models_ordered,
     lock_release,
     rename_release,
+    unlock_release,
 )
 from tests.testapp.models import Category, CategoryNote, Part, Product, Supplier
 
@@ -293,3 +297,99 @@ class TestCountReleaseRows:
 
     def test_count_release_rows_empty_release_is_empty(self, release: Release) -> None:
         assert not count_release_rows(release), "A release with no rows must report no counts"
+
+
+@pytest.mark.django_db
+class TestApproveReleaseService:
+    def test_approve_release_approves_active_draft_rows_and_reports_counts(self, release: Release) -> None:
+        Category.objects.create(name="A", release=release)
+        Category.objects.create(name="B", release=release).deactivate()
+        future = Category.objects.create(name="C", release=release)
+        future.mark_future_development()
+        assert approve_release(release.version) == {"testapp.Category": 1}, "Only active DRAFT rows are approved"
+        assert Category.objects.get(pk=future.pk).status == DataStatus.FUTURE_DEVELOPMENT, "Future rows untouched"
+
+    def test_approve_release_nothing_to_approve_returns_empty(self, release: Release) -> None:
+        assert not approve_release(release.version), "No DRAFT rows means no counts"
+
+    @pytest.mark.parametrize("deploy", [False, True], ids=["locked", "deployed"])
+    def test_approve_release_frozen_release_raises(self, locked_release: Release, deploy: bool) -> None:
+        if deploy:
+            locked_release.deploy()
+        with pytest.raises(ValueError, match="approve rows before locking"):
+            approve_release(locked_release.version)
+
+    def test_approve_release_missing_release_raises(self, db: None) -> None:
+        with pytest.raises(ValueError, match="does not exist"):
+            approve_release("ghost")
+
+
+@pytest.mark.django_db
+class TestUnlockReleaseService:
+    def test_unlock_release_unlocks_and_clears_locked_at(self, locked_release: Release) -> None:
+        unlock_release(locked_release.version)
+        locked_release.refresh_from_db()
+        assert (locked_release.is_locked, locked_release.locked_at) == (False, None), "Release must be unlocked"
+
+    def test_unlock_release_dry_run_changes_nothing(self, locked_release: Release) -> None:
+        unlock_release(locked_release.version, dry_run=True)
+        assert Release.objects.get(pk=locked_release.pk).is_locked is True, "Dry run must not unlock"
+
+    @pytest.mark.parametrize("dry_run", [False, True], ids=["real", "dry_run"])
+    def test_unlock_release_deployed_raises(self, deployed_release: Release, dry_run: bool) -> None:
+        with pytest.raises(ValueError, match="deployed to production"):
+            unlock_release(deployed_release.version, dry_run=dry_run)
+
+    def test_unlock_release_not_locked_raises(self, release: Release) -> None:
+        with pytest.raises(ValueError, match="not locked"):
+            unlock_release(release.version)
+
+    def test_unlock_release_missing_release_raises(self, db: None) -> None:
+        with pytest.raises(ValueError, match="does not exist"):
+            unlock_release("ghost")
+
+
+@pytest.mark.django_db
+class TestDeployReleaseService:
+    def test_deploy_release_marks_deployed(self, locked_release: Release) -> None:
+        deploy_release(locked_release.version)
+        locked_release.refresh_from_db()
+        assert locked_release.deployed is True and locked_release.deployed_at is not None, "Must be deployed"
+
+    def test_deploy_release_unlocked_raises(self, release: Release) -> None:
+        with pytest.raises(ValueError, match="must be locked"):
+            deploy_release(release.version)
+
+    def test_deploy_release_already_deployed_raises(self, deployed_release: Release) -> None:
+        with pytest.raises(ValueError, match="already deployed"):
+            deploy_release(deployed_release.version)
+
+    def test_deploy_release_missing_release_raises(self, db: None) -> None:
+        with pytest.raises(ValueError, match="does not exist"):
+            deploy_release("ghost")
+
+
+@pytest.mark.django_db
+class TestDeprecateReleaseService:
+    def test_deprecate_release_then_undo(self, release: Release) -> None:
+        deprecate_release(release.version)
+        assert Release.objects.get(pk=release.pk).is_deprecated is True, "Release must be deprecated"
+        deprecate_release(release.version, undo=True)
+        assert Release.objects.get(pk=release.pk).is_deprecated is False, "Undo must restore the release"
+
+    def test_deprecate_release_deployed_release_succeeds(self, deployed_release: Release) -> None:
+        deprecate_release(deployed_release.version)
+        assert Release.objects.get(pk=deployed_release.pk).is_deprecated is True, "Deployed can be deprecated"
+
+    def test_deprecate_release_already_deprecated_raises(self, release: Release) -> None:
+        deprecate_release(release.version)
+        with pytest.raises(ValueError, match="already deprecated"):
+            deprecate_release(release.version)
+
+    def test_deprecate_release_undo_not_deprecated_raises(self, release: Release) -> None:
+        with pytest.raises(ValueError, match="not deprecated"):
+            deprecate_release(release.version, undo=True)
+
+    def test_deprecate_release_missing_release_raises(self, db: None) -> None:
+        with pytest.raises(ValueError, match="does not exist"):
+            deprecate_release("ghost")

@@ -14,9 +14,7 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 
-from django_versioned_models.mixins import DataStatus
-from django_versioned_models.models import Release
-from django_versioned_models.services import get_versioned_models
+from django_versioned_models.services import approve_release
 
 
 class Command(BaseCommand):
@@ -30,31 +28,17 @@ class Command(BaseCommand):
 
     def handle(self, **kwargs: Any) -> None:
         version = kwargs["release_version"]
-
         try:
-            release = Release.objects.get(version=version)
-        except Release.DoesNotExist as exc:
-            raise CommandError(f'Release "{version}" does not exist.') from exc
+            approved = approve_release(version)
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
 
-        if release.is_locked or release.deployed:
-            raise CommandError(
-                f'Release "{version}" is locked — approve rows before locking. '
-                f"Flow: approve_release -> lock_release -> deploy_release."
-            )
-
-        total = 0
-        for model in get_versioned_models():
-            # for_release() filters active=True, so inactive rows are automatically skipped
-            rows = model.objects.for_release(release).filter(status=DataStatus.DRAFT)
-            count = rows.count()
-            rows.update(status=DataStatus.APPROVED)
-            if count:
-                self.stdout.write(f"  {model.__name__}: {count} rows approved")
-            total += count
+        for label, count in approved.items():
+            self.stdout.write(f"  {label.rsplit('.', 1)[-1]}: {count} rows approved")
 
         self.stdout.write(
             self.style.SUCCESS(
-                f"\n✅ {total} DRAFT rows approved in release {version}.\n"
+                f"\n✅ {sum(approved.values())} DRAFT rows approved in release {version}.\n"
                 f"   FUTURE_DEVELOPMENT, FUTURE_DEPRECATION, and inactive rows were left untouched."
             )
         )

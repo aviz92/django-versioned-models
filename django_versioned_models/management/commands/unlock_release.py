@@ -13,7 +13,7 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 
-from django_versioned_models.models import Release
+from django_versioned_models.services import unlock_release
 
 
 class Command(BaseCommand):
@@ -29,21 +29,10 @@ class Command(BaseCommand):
 
     def handle(self, **kwargs: Any) -> None:
         version = kwargs["release_version"]
-
         try:
-            release = Release.objects.get(version=version)
-        except Release.DoesNotExist as exc:
-            raise CommandError(f'Release "{version}" does not exist.') from exc
-
-        if release.deployed:
-            raise CommandError(
-                f'Release "{version}" has been deployed to production and cannot be unlocked. '
-                f"Create a patch release instead: "
-                f"python manage.py create_release --release-version <new> --based-on {version}"
-            )
-
-        if not release.is_locked:
-            raise CommandError(f'Release "{version}" is not locked.')
+            unlock_release(version, dry_run=True)
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
 
         if not kwargs["force"]:
             self.stdout.write(
@@ -59,9 +48,10 @@ class Command(BaseCommand):
                 self.style.WARNING(f"\n⚠️  WARNING: Unlocking release {version} without confirmation (--force).\n")
             )
 
-        release.is_locked = False
-        release.locked_at = None
-        release.save(update_fields=["is_locked", "locked_at"])
+        try:
+            unlock_release(version)
+        except ValueError as exc:
+            raise CommandError(str(exc)) from exc
 
         self.stdout.write(
             self.style.SUCCESS(
