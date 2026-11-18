@@ -31,7 +31,7 @@ def get_versioned_models_ordered() -> list[type[VersionedModel]]:
     graph = {m: set() for m in models}
     for model in models:
         for field in model._meta.get_fields():  # pylint: disable=W0212
-            if not field.is_relation or not field.many_to_one:
+            if not field.is_relation or not (field.many_to_one or field.one_to_one) or not field.concrete:
                 continue
             related = field.related_model
             if related in model_set and related is not model:
@@ -144,42 +144,80 @@ def _copy_model_rows(
     Copy all rows of a model from source_release to new_release, remapping FKs.
     Uses all_rows() to include inactive rows — architects can reactivate them
     in the new release if needed. Active state is preserved as-is.
+
+    FK and one-to-one fields to versioned models point to the copies in the new release; fields to
+    non-versioned models keep their value. A self-reference (a row pointing to another row of the same
+    model) is set in a second pass, once every row of the model has its copy — so the copy order of
+    the rows doesn't matter.
+
+    Raises:
+        ValueError: if a row points to a versioned row outside the source release (it has no copy),
+            or the model has a non-nullable self-reference (it can't be set in a second pass).
     """
-    source_rows = model.objects.all_rows(source_release).select_related("release")
-    model_key = f"{model._meta.app_label}.{model.__name__}"  # pylint: disable=W0212
-    id_mapping[model_key] = {}
+    source_rows = list(model.objects.all_rows(source_release).order_by("pk"))
+    mapping = id_mapping[_model_key(model)] = {}
+    self_fks = [f for f in _forward_fks(model) if f.related_model is model]
+    if source_rows and (required := [f.name for f in self_fks if not f.null]):
+        raise ValueError(
+            f"Cannot copy {model.__name__}: self-reference {', '.join(required)} must be nullable "
+            f"so it can be set after all rows are copied."
+        )
 
+    deferred: list[tuple[Model, Any, Any]] = []  # (new row, self-FK field, old target pk)
     for row in source_rows:
-        old_id = row.pk
         field_values = {}
-
-        for field in model._meta.get_fields():  # pylint: disable=W0212
-            if field.many_to_many:
-                continue  # copied by _copy_m2m_links once all rows exist
-            if not hasattr(field, "column"):
+        row_deferred = []
+        for field in model._meta.concrete_fields:  # pylint: disable=W0212
+            if field.primary_key or field.name == "release":
                 continue
-            if field.primary_key:
-                continue
-            if field.name == "release":
-                continue
-
-            if field.is_relation and field.many_to_one:
-                related_model = field.related_model
-                # pylint: disable = W0212
-                if (related_key := f"{related_model._meta.app_label}.{related_model.__name__}") in id_mapping:
-                    if (old_fk_id := getattr(row, f"{field.name}_id")) is not None:
-                        new_related = id_mapping[related_key].get(old_fk_id)
-                        field_values[f"{field.name}_id"] = new_related.pk if new_related else old_fk_id
-                    else:
-                        field_values[f"{field.name}_id"] = None
-                    continue
-
-            field_values[field.attname] = getattr(
-                row, field.attname
-            )  # attname: FK to a non-versioned model keeps its id
+            value = getattr(row, field.attname)
+            if value is not None and field in self_fks:
+                row_deferred.append((field, value))
+                value = None
+            elif value is not None and field.is_relation:
+                value = _remap(model, row, field, value, id_mapping)
+            field_values[field.attname] = value  # attname: an FK to a non-versioned model keeps its id
 
         new_row = model.objects.create(**field_values, release=new_release)
-        id_mapping[model_key][old_id] = new_row
+        mapping[row.pk] = new_row
+        deferred.extend((new_row, field, value) for field, value in row_deferred)
+
+    _apply_self_references(model, mapping, deferred)
+
+
+def _apply_self_references(model: type[Model], mapping: dict, deferred: list[tuple[Model, Any, Any]]) -> None:
+    """Second pass: point each deferred self-reference at the copy of its target."""
+    if not deferred:
+        return
+    for new_row, field, old_target in deferred:
+        if (target := mapping.get(old_target)) is None:
+            raise ValueError(
+                f"Cannot copy {model.__name__}.{field.name}: it points to {model.__name__} {old_target}, "
+                f"which is not in the source release."
+            )
+        setattr(new_row, field.attname, target.pk)
+    model.objects.bulk_update({row for row, _, _ in deferred}, sorted({f.attname for _, f, _ in deferred}))
+
+
+def _forward_fks(model: type[Model]) -> list[Any]:
+    """Concrete FK and one-to-one fields of a model, excluding the release FK."""
+    return [
+        f
+        for f in model._meta.concrete_fields  # pylint: disable=W0212
+        if f.is_relation and (f.many_to_one or f.one_to_one) and f.name != "release"
+    ]
+
+
+def _remap(model: type[Model], row: Model, field: Any, value: Any, id_mapping: dict) -> Any:
+    """Map an FK value to the copy of its target in the new release; non-versioned targets keep it."""
+    if (mapping := id_mapping.get(_model_key(field.related_model))) is None:
+        return value
+    if (new_target := mapping.get(value)) is None:
+        raise ValueError(
+            f"Cannot copy {model.__name__} {row.pk}: {field.name} points to "
+            f"{field.related_model.__name__} {value}, which is not in the source release."
+        )
+    return new_target.pk
 
 
 @transaction.atomic
