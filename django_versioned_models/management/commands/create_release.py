@@ -16,7 +16,6 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 
-from django_versioned_models.models import Release
 from django_versioned_models.services import create_release
 
 
@@ -35,16 +34,15 @@ class Command(BaseCommand):
 
         if not based_on:
             # Standalone release — no source, unlocked so architects can add data
-            release = Release.objects.create(
-                version=version,
-                description=description,
-                is_locked=False,
-            )
+            try:
+                release = create_release(version=version, description=description)
+            except ValueError as e:
+                raise CommandError(str(e)) from e
             self.stdout.write(
                 self.style.SUCCESS(
                     f"✅ Release {release.version} created.\n"
                     f"   No source — standalone release. Add data, then lock when ready.\n"
-                    f"   To lock: python manage.py lock_release --release-version {version}"
+                    f"   To lock: python manage.py lock_release --release-version {release.version}"
                 )
             )
         else:

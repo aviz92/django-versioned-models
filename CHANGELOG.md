@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [4.0.0] - 2026-11-17
+## [4.0.0] - 2026-11-18
 
 ### Changed
 - **Breaking:** deployed releases are now guarded on the `Release` model, not only in the services and management commands. `Release.save()` raises `ValidationError` when changing `version`, `is_locked`, `locked_at`, `deployed` or `deployed_at` of a deployed release, and `Release.delete()` raises for a deployed release. Deprecation, `description` and `based_on` stay editable.
@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rows are read in batches too, and the old-to-new mapping keeps only primary keys, so memory no longer grows with full row objects.
 
 ### Fixed
+- `create_release` validates the new version like `rename_release` does: an empty or whitespace-only name, a name over 50 characters, or a name that already exists now raise `ValueError` (a `CommandError` from the command) instead of crashing with a raw `IntegrityError` / `DataError` or creating a release with an empty name. Two concurrent creates or renames to the same name get the same clear error. Standalone creation now goes through `create_release(version)` (`based_on_version` is optional).
+- Package classifiers now list the Django and Python versions that are actually tested and supported (Django 5.2, 6.0, 6.1; Python 3.12–3.14), not Django 5.0 / 5.1.
 - `lock_release` usage example in its module docstring used the old `--version` flag; it is `--release-version`.
 - Proxy models of versioned models are no longer treated as separate versioned models. They share their model's table, so `create_release` copied those rows twice, and `count_release_rows`, `delete_release --dry-run` and `approve_release` went over them twice.
 - `create_release` no longer leaves self-references pointing into the source release. A row that points to another row of the same model (a parent/child tree) is remapped in a second pass, so the copy order doesn't matter — cycles and rows pointing to themselves included. A non-nullable self-reference can't be set that way and now raises `ValueError`.

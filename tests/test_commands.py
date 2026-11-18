@@ -51,6 +51,25 @@ class TestCreateReleaseCommand:
 
 
 @pytest.mark.django_db
+class TestCreateReleaseCommandValidation:
+    @pytest.mark.parametrize("based_on", [None, "v1.0.0-locked"], ids=["standalone", "branch"])
+    def test_existing_name_raises_command_error(
+        self, release: Release, locked_release: Release, based_on: str | None
+    ) -> None:
+        kwargs = {"based_on": based_on} if based_on else {}
+        with pytest.raises(CommandError, match="already exists"):
+            call_command("create_release", release_version=release.version, stdout=StringIO(), **kwargs)
+
+    def test_empty_name_raises_command_error(self, db: None) -> None:
+        with pytest.raises(CommandError, match="must not be empty"):
+            call_command("create_release", release_version="  ", stdout=StringIO())
+
+    def test_too_long_name_raises_command_error(self, db: None) -> None:
+        with pytest.raises(CommandError, match="at most 50 characters"):
+            call_command("create_release", release_version="x" * 60, stdout=StringIO())
+
+
+@pytest.mark.django_db
 class TestLockReleaseCommand:
     def test_locks_a_release(self, release: Release) -> None:
         call_command("lock_release", release_version=release.version, stdout=StringIO())
